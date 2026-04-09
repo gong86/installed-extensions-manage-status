@@ -75,7 +75,8 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "package": "vsce package",
-    "lint": "tsc -noEmit -p ./"
+    "lint": "tsc -noEmit -p ./",
+    "sync-changelog": "node ./scripts/update-changelog.js"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",
