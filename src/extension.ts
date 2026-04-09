@@ -529,6 +529,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       border-radius: 10px;
       padding: 10px;
       cursor: pointer;
+      transition: transform 80ms ease, background-color 80ms ease, border-color 80ms ease;
     }
 
     .card-main {
@@ -547,6 +548,12 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
     .card:focus-visible {
       outline: 1px solid var(--vscode-focusBorder);
       outline-offset: 2px;
+    }
+
+    .card:active {
+      transform: scale(0.99);
+      background: color-mix(in srgb, var(--vscode-list-activeSelectionBackground) 28%, var(--vscode-sideBar-background));
+      border-color: var(--vscode-focusBorder);
     }
 
     .icon {
