@@ -28,7 +28,7 @@
     "vscode": "^1.85.0"
   },
   "activationEvents": [
-    "*"
+  "onView:installedExtensionsManageStatusView"
   ],
   "main": "./out/extension.js",
   "icon": "resources/icon.png",
