@@ -101,7 +101,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
           }
           break;
 
-        case 'manage':
+        case 'openExtension':
           if (message.value) {
             this.selectedExtensionId = message.value;
             await vscode.commands.executeCommand('extension.open', message.value);
@@ -338,12 +338,18 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
         const kindText = item.isBuiltin ? 'Built-in' : '';
 
         return `
-          <article class="card ${selectedExtensionId === item.id ? 'selected' : ''}" data-id="${escapeHtml(item.id)}">
+          <article
+            class="card ${selectedExtensionId === item.id ? 'selected' : ''}"
+            data-id="${escapeHtml(item.id)}"
+            role="button"
+            tabindex="0"
+            aria-label="Open ${escapeHtml(item.id)}"
+          >
             <div class="card-main">
               ${icon}
               <div class="meta">
                 <div class="title-row">
-                  <button class="title-link" data-action="manage" data-value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</button>
+                  <span class="card-title">${escapeHtml(item.name)}</span>
                   ${kindText ? `<span class="badge kind-badge">${escapeHtml(kindText)}</span>` : ''}
                   <span class="badge status-badge ${statusClass}">${escapeHtml(statusText)}</span>
                 </div>
@@ -355,7 +361,6 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
               </div>
             </div>
             <div class="actions">
-              <button data-action="manage" data-value="${escapeHtml(item.id)}">Manage</button>
               <button data-action="copyId" data-value="${escapeHtml(item.id)}">Copy ID</button>
               <button data-action="copyInstall" data-value="${escapeHtml(item.id)}">Copy Install Cmd</button>
               <button data-action="openMarketplace" data-value="${escapeHtml(marketplaceUrl)}">Marketplace</button>
@@ -415,8 +420,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       z-index: 2;
     }
 
-    button,
-    .title-link {
+    button {
       border: 1px solid var(--vscode-button-border, transparent);
       background: var(--vscode-button-background);
       color: var(--vscode-button-foreground);
@@ -426,18 +430,13 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       font: inherit;
     }
 
-    .title-link {
-      background: transparent;
+    .card-title {
       color: var(--vscode-textLink-foreground);
-      border: none;
-      padding: 0;
-      text-align: left;
       font-size: 13px;
       font-weight: 600;
     }
 
-    button:hover,
-    .title-link:hover {
+    button:hover {
       background: var(--vscode-button-hoverBackground);
     }
 
@@ -529,6 +528,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       background: var(--vscode-sideBar-background);
       border-radius: 10px;
       padding: 10px;
+      cursor: pointer;
     }
 
     .card-main {
@@ -542,6 +542,11 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       border-color: var(--vscode-focusBorder);
       box-shadow: inset 0 0 0 1px var(--vscode-focusBorder);
       background: color-mix(in srgb, var(--vscode-list-activeSelectionBackground) 20%, var(--vscode-sideBar-background));
+    }
+
+    .card:focus-visible {
+      outline: 1px solid var(--vscode-focusBorder);
+      outline-offset: 2px;
     }
 
     .icon {
@@ -671,20 +676,45 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       const target = event.target;
       if (!(target instanceof HTMLElement)) return;
 
-      const card = target.closest('.card[data-id]');
-      if (card instanceof HTMLElement) {
-        const id = card.getAttribute('data-id');
-        if (id) {
-          setSelectedCard(id);
-        }
+      const action = target.dataset.action;
+      if (action) {
+        vscode.postMessage({
+          type: action,
+          value: target.dataset.value
+        });
+        return;
       }
 
-      const action = target.dataset.action;
-      if (!action) return;
+      const card = target.closest('.card[data-id]');
+      if (!(card instanceof HTMLElement)) return;
+
+      const id = card.getAttribute('data-id');
+      if (!id) return;
+
+      setSelectedCard(id);
 
       vscode.postMessage({
-        type: action,
-        value: target.dataset.value
+        type: 'openExtension',
+        value: id
+      });
+    });
+
+    document.addEventListener('keydown', (event) => {
+      if (!(event.target instanceof HTMLElement)) return;
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      if (event.target.dataset.action) return;
+
+      const card = event.target.closest('.card[data-id]');
+      if (!(card instanceof HTMLElement)) return;
+
+      const id = card.getAttribute('data-id');
+      if (!id) return;
+
+      event.preventDefault();
+      setSelectedCard(id);
+      vscode.postMessage({
+        type: 'openExtension',
+        value: id
       });
     });
   </script>
