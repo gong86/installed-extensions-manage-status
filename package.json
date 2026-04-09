@@ -1,0 +1,86 @@
+{
+  "name": "installed-extensions-manage-status",
+  "displayName": "Installed Extensions Manage Status",
+  "description": "Browse installed VS Code extensions with pack grouping, status badges, and quick manage actions.",
+  "version": "0.1.0",
+  "publisher": "gonghui",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gong86/installed-extensions-manage-status.git"
+  },
+  "homepage": "https://github.com/gong86/installed-extensions-manage-status#readme",
+  "bugs": {
+    "url": "https://github.com/gong86/installed-extensions-manage-status/issues"
+  },
+  "keywords": [
+    "vscode",
+    "extension",
+    "extensions",
+    "sidebar",
+    "webview",
+    "productivity"
+  ],
+  "categories": [
+    "Other"
+  ],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "activationEvents": [
+    "*"
+  ],
+  "main": "./out/extension.js",
+  "icon": "resources/icon.png",
+  "galleryBanner": {
+    "color": "#1f2937",
+    "theme": "dark"
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "installedExtensionsManageStatusContainer",
+          "title": "Ext Manage",
+          "icon": "resources/extensions.svg"
+        }
+      ]
+    },
+    "views": {
+      "installedExtensionsManageStatusContainer": [
+        {
+          "type": "webview",
+          "id": "installedExtensionsManageStatusView",
+          "name": "Installed Extensions"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "installedExtensionsManageStatus.refresh",
+        "title": "Refresh Installed Extensions"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "installedExtensionsManageStatus.refresh",
+          "when": "view == installedExtensionsManageStatusView",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package",
+    "lint": "tsc -noEmit -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.6.2",
+    "typescript": "^5.4.5"
+  }
+}
