@@ -59,6 +59,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
   private expandedGroupIds = new Set<string>();
   private hasInitializedExpandedGroups = false;
+  private selectedExtensionId?: string;
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -102,30 +103,13 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
 
         case 'manage':
           if (message.value) {
+            this.selectedExtensionId = message.value;
             await vscode.commands.executeCommand('extension.open', message.value);
           }
           break;
 
-        case 'toggleEnable':
-          if (message.value) {
-            await vscode.commands.executeCommand(
-              message.value === this.context.extension.id
-                ? 'workbench.extensions.disableExtension'
-                : 'workbench.extensions.disableExtension',
-              message.value
-            );
-            await this.render(webviewView);
-          }
-          break;
-
-        case 'uninstall':
-          if (message.value) {
-            await vscode.commands.executeCommand(
-              'workbench.extensions.uninstallExtension',
-              message.value
-            );
-            await this.render(webviewView);
-          }
+        case 'setSelectedExtension':
+          this.selectedExtensionId = message.value;
           break;
 
         case 'setExpandedGroups':
@@ -171,7 +155,14 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
     }
 
     webviewView.description = `${counts.total} total`;
-    webview.html = this.getHtml(webview, nonce, groups, counts, this.expandedGroupIds);
+    webview.html = this.getHtml(
+      webview,
+      nonce,
+      groups,
+      counts,
+      this.expandedGroupIds,
+      this.selectedExtensionId
+    );
   }
 
   private getItems(webview: vscode.Webview): ExtensionItem[] {
@@ -308,7 +299,8 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
     nonce: string,
     groups: PackGroup[],
     counts: SummaryCounts,
-    expandedGroupIds: Set<string>
+    expandedGroupIds: Set<string>,
+    selectedExtensionId?: string
   ): string {
     const statsHtml = `
       <div class="stats-grid">
@@ -346,7 +338,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
         const kindText = item.isBuiltin ? 'Built-in' : '';
 
         return `
-          <article class="card" data-id="${escapeHtml(item.id)}">
+          <article class="card ${selectedExtensionId === item.id ? 'selected' : ''}" data-id="${escapeHtml(item.id)}">
             <div class="card-main">
               ${icon}
               <div class="meta">
@@ -364,10 +356,6 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
             </div>
             <div class="actions">
               <button data-action="manage" data-value="${escapeHtml(item.id)}">Manage</button>
-              <button data-action="toggleEnable" data-value="${escapeHtml(item.id)}">
-                ${item.isActive ? 'Disable' : 'Enable'}
-              </button>
-              <button data-action="uninstall" data-value="${escapeHtml(item.id)}">Uninstall</button>
               <button data-action="copyId" data-value="${escapeHtml(item.id)}">Copy ID</button>
               <button data-action="copyInstall" data-value="${escapeHtml(item.id)}">Copy Install Cmd</button>
               <button data-action="openMarketplace" data-value="${escapeHtml(marketplaceUrl)}">Marketplace</button>
@@ -550,6 +538,12 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       align-items: start;
     }
 
+    .card.selected {
+      border-color: var(--vscode-focusBorder);
+      box-shadow: inset 0 0 0 1px var(--vscode-focusBorder);
+      background: color-mix(in srgb, var(--vscode-list-activeSelectionBackground) 20%, var(--vscode-sideBar-background));
+    }
+
     .icon {
       width: 36px;
       height: 36px;
@@ -661,6 +655,14 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       const target = event.target;
       if (!(target instanceof HTMLElement)) return;
 
+      const card = target.closest('.card[data-id]');
+      if (card instanceof HTMLElement) {
+        const id = card.getAttribute('data-id');
+        if (id) {
+          setSelectedCard(id);
+        }
+      }
+
       const action = target.dataset.action;
       if (!action) return;
 
@@ -693,4 +695,20 @@ function escapeHtml(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function setSelectedCard(id) {
+  document.querySelectorAll('.card.selected').forEach((el) => {
+    el.classList.remove('selected');
+  });
+
+  const next = document.querySelector(`.card[data-id="${CSS.escape(id)}"]`);
+  if (next) {
+    next.classList.add('selected');
+  }
+
+  vscode.postMessage({
+    type: 'setSelectedExtension',
+    value: id
+  });
 }
