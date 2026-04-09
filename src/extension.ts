@@ -31,6 +31,8 @@ type SummaryCounts = {
   builtinInactive: number;
 };
 
+type GroupMode = 'pack' | 'publisher';
+
 export function activate(context: vscode.ExtensionContext): void {
   const provider = new InstalledExtensionsWebviewProvider(context);
 
@@ -60,6 +62,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
   private expandedGroupIds = new Set<string>();
   private hasInitializedExpandedGroups = false;
   private selectedExtensionId?: string;
+  private groupMode: GroupMode = 'pack';
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -116,6 +119,14 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
           this.expandedGroupIds = new Set(message.expandedIds ?? []);
           break;
 
+        case 'setGroupMode':
+          if (message.value === 'pack' || message.value === 'publisher') {
+            this.groupMode = message.value;
+            this.expandedGroupIds.clear();
+            await this.render(webviewView);
+          }
+          break;
+
         case 'refresh':
           await this.render(webviewView);
           break;
@@ -160,7 +171,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
     const webview = webviewView.webview;
     const nonce = getNonce();
     const items = this.getItems(webview);
-    const groups = this.getPackGroups(items);
+    const groups = this.getGroups(items);
     const counts = this.getCounts(items);
 
     if (!this.hasInitializedExpandedGroups) {
@@ -179,7 +190,8 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       groups,
       counts,
       this.expandedGroupIds,
-      this.selectedExtensionId
+      this.selectedExtensionId,
+      this.groupMode
     );
   }
 
@@ -235,6 +247,14 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       builtinActive: builtin.filter((item) => item.isActive).length,
       builtinInactive: builtin.filter((item) => !item.isActive).length,
     };
+  }
+
+  private getGroups(items: ExtensionItem[]): PackGroup[] {
+    if (this.groupMode === 'publisher') {
+      return this.getPublisherGroups(items);
+    }
+
+    return this.getPackGroups(items);
   }
 
   private getPackGroups(items: ExtensionItem[]): PackGroup[] {
@@ -312,13 +332,52 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
     return groups;
   }
 
+  private getPublisherGroups(items: ExtensionItem[]): PackGroup[] {
+    const groupsByPublisher = new Map<string, ExtensionItem[]>();
+
+    for (const item of items) {
+      const publisher = item.publisher || 'unknown';
+      const existing = groupsByPublisher.get(publisher);
+      if (existing) {
+        existing.push(item);
+      } else {
+        groupsByPublisher.set(publisher, [item]);
+      }
+    }
+
+    return [...groupsByPublisher.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([publisher, publisherItems]) => {
+        const installedCount = publisherItems.filter((item) => !item.isBuiltin).length;
+        const builtinCount = publisherItems.length - installedCount;
+        const descriptionParts: string[] = [];
+
+        if (installedCount > 0) {
+          descriptionParts.push(`${installedCount} installed`);
+        }
+
+        if (builtinCount > 0) {
+          descriptionParts.push(`${builtinCount} built-in`);
+        }
+
+        return {
+          id: `publisher:${publisher}`,
+          label: publisher,
+          description: descriptionParts.join(' · '),
+          items: publisherItems.sort((a, b) => a.id.localeCompare(b.id)),
+          isPack: false,
+        };
+      });
+  }
+
   private getHtml(
     webview: vscode.Webview,
     nonce: string,
     groups: PackGroup[],
     counts: SummaryCounts,
     expandedGroupIds: Set<string>,
-    selectedExtensionId?: string
+    selectedExtensionId?: string,
+    groupMode: GroupMode = 'pack'
   ): string {
     const statsHtml = `
       <div class="stats-grid">
@@ -455,6 +514,15 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       font: inherit;
     }
 
+    select {
+      border: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border));
+      background: var(--vscode-dropdown-background);
+      color: var(--vscode-dropdown-foreground);
+      border-radius: 6px;
+      padding: 4px 8px;
+      font: inherit;
+    }
+
     .card-title {
       color: var(--vscode-textLink-foreground);
       font-size: 13px;
@@ -469,6 +537,14 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       color: var(--vscode-descriptionForeground);
       font-size: 12px;
       margin-left: auto;
+    }
+
+    .group-mode-control {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--vscode-descriptionForeground);
     }
 
     .stats-grid {
@@ -684,6 +760,13 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
 <body>
   <div class="toolbar">
     <button data-action="refresh">Refresh</button>
+    <label class="group-mode-control">
+      <span>Group</span>
+      <select id="group-mode-select">
+        <option value="pack"${groupMode === 'pack' ? ' selected' : ''}>Pack</option>
+        <option value="publisher"${groupMode === 'publisher' ? ' selected' : ''}>Publisher</option>
+      </select>
+    </label>
     <div class="count">${counts.total} total</div>
   </div>
 
@@ -783,6 +866,16 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
     document.querySelectorAll('details.group').forEach((details) => {
       details.addEventListener('toggle', sendExpandedGroups);
     });
+
+    const groupModeSelect = document.getElementById('group-mode-select');
+    if (groupModeSelect instanceof HTMLSelectElement) {
+      groupModeSelect.addEventListener('change', () => {
+        vscode.postMessage({
+          type: 'setGroupMode',
+          value: groupModeSelect.value
+        });
+      });
+    }
 
     window.addEventListener('message', (event) => {
       const message = event.data;
