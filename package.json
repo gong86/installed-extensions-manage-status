@@ -2,7 +2,7 @@
   "name": "installed-extensions-manage-status",
   "displayName": "Installed Extensions Manage Status",
   "description": "Browse installed VS Code extensions with pack grouping, status badges, and quick manage actions.",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "publisher": "gonghui",
   "license": "MIT",
   "repository": {
