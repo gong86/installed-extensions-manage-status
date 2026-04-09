@@ -106,6 +106,28 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
           }
           break;
 
+        case 'toggleEnable':
+          if (message.value) {
+            await vscode.commands.executeCommand(
+              message.value === this.context.extension.id
+                ? 'workbench.extensions.disableExtension'
+                : 'workbench.extensions.disableExtension',
+              message.value
+            );
+            await this.render(webviewView);
+          }
+          break;
+
+        case 'uninstall':
+          if (message.value) {
+            await vscode.commands.executeCommand(
+              'workbench.extensions.uninstallExtension',
+              message.value
+            );
+            await this.render(webviewView);
+          }
+          break;
+
         case 'setExpandedGroups':
           this.expandedGroupIds = new Set(message.expandedIds ?? []);
           break;
@@ -342,6 +364,10 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
             </div>
             <div class="actions">
               <button data-action="manage" data-value="${escapeHtml(item.id)}">Manage</button>
+              <button data-action="toggleEnable" data-value="${escapeHtml(item.id)}">
+                ${item.isActive ? 'Disable' : 'Enable'}
+              </button>
+              <button data-action="uninstall" data-value="${escapeHtml(item.id)}">Uninstall</button>
               <button data-action="copyId" data-value="${escapeHtml(item.id)}">Copy ID</button>
               <button data-action="copyInstall" data-value="${escapeHtml(item.id)}">Copy Install Cmd</button>
               <button data-action="openMarketplace" data-value="${escapeHtml(marketplaceUrl)}">Marketplace</button>
