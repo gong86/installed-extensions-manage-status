@@ -4,6 +4,7 @@ type ExtensionItem = {
   id: string;
   publisher: string;
   name: string;
+  categories: string[];
   version: string;
   description: string;
   iconUri?: vscode.Uri;
@@ -31,7 +32,7 @@ type SummaryCounts = {
   builtinInactive: number;
 };
 
-type GroupMode = 'pack' | 'publisher';
+type GroupMode = 'pack' | 'publisher' | 'category' | 'category-all';
 
 export function activate(context: vscode.ExtensionContext): void {
   const provider = new InstalledExtensionsWebviewProvider(context);
@@ -120,7 +121,12 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
           break;
 
         case 'setGroupMode':
-          if (message.value === 'pack' || message.value === 'publisher') {
+          if (
+            message.value === 'pack'
+            || message.value === 'publisher'
+            || message.value === 'category'
+            || message.value === 'category-all'
+          ) {
             this.groupMode = message.value;
             this.expandedGroupIds.clear();
             await this.render(webviewView);
@@ -205,6 +211,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
           description?: string;
           icon?: string;
           isBuiltin?: boolean;
+          categories?: string[];
         };
 
         let iconUri: vscode.Uri | undefined;
@@ -222,6 +229,9 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
           id: ext.id,
           publisher,
           name,
+          categories: Array.isArray(packageJson.categories) && packageJson.categories.length > 0
+            ? packageJson.categories
+            : ['Uncategorized'],
           version: packageJson.version ?? 'unknown',
           description: packageJson.description ?? '',
           iconUri,
@@ -252,6 +262,14 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
   private getGroups(items: ExtensionItem[]): PackGroup[] {
     if (this.groupMode === 'publisher') {
       return this.getPublisherGroups(items);
+    }
+
+    if (this.groupMode === 'category') {
+      return this.getCategoryGroups(items);
+    }
+
+    if (this.groupMode === 'category-all') {
+      return this.getCategoryGroups(items, true);
     }
 
     return this.getPackGroups(items);
@@ -365,6 +383,49 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
           label: publisher,
           description: descriptionParts.join(' · '),
           items: publisherItems.sort((a, b) => a.id.localeCompare(b.id)),
+          isPack: false,
+        };
+      });
+  }
+
+  private getCategoryGroups(items: ExtensionItem[], duplicateAcrossCategories = false): PackGroup[] {
+    const groupsByCategory = new Map<string, ExtensionItem[]>();
+
+    for (const item of items) {
+      const categories = duplicateAcrossCategories
+        ? item.categories
+        : [item.categories[0] ?? 'Uncategorized'];
+
+      for (const category of categories) {
+        const existing = groupsByCategory.get(category);
+        if (existing) {
+          existing.push(item);
+        } else {
+          groupsByCategory.set(category, [item]);
+        }
+      }
+    }
+
+    return [...groupsByCategory.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([category, categoryItems]) => {
+        const installedCount = categoryItems.filter((item) => !item.isBuiltin).length;
+        const builtinCount = categoryItems.length - installedCount;
+        const descriptionParts: string[] = [];
+
+        if (installedCount > 0) {
+          descriptionParts.push(`${installedCount} installed`);
+        }
+
+        if (builtinCount > 0) {
+          descriptionParts.push(`${builtinCount} built-in`);
+        }
+
+        return {
+          id: `category:${category}`,
+          label: category,
+          description: descriptionParts.join(' · '),
+          items: categoryItems.sort((a, b) => a.id.localeCompare(b.id)),
           isPack: false,
         };
       });
@@ -765,6 +826,8 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       <select id="group-mode-select">
         <option value="pack"${groupMode === 'pack' ? ' selected' : ''}>Pack</option>
         <option value="publisher"${groupMode === 'publisher' ? ' selected' : ''}>Publisher</option>
+        <option value="category"${groupMode === 'category' ? ' selected' : ''}>Category</option>
+        <option value="category-all"${groupMode === 'category-all' ? ' selected' : ''}>Category (All)</option>
       </select>
     </label>
     <div class="count">${counts.total} total</div>
