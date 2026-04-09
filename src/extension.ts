@@ -79,7 +79,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       localResourceRoots: this.getLocalResourceRoots(),
     };
 
-    webviewView.webview.onDidReceiveMessage(async (message: { type: string; value?: string; expandedIds?: string[] }) => {
+    webviewView.webview.onDidReceiveMessage(async (message: { type: string; value?: string; expandedIds?: string[]; opening?: boolean }) => {
       switch (message.type) {
         case 'copyId':
           if (message.value) {
@@ -104,7 +104,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
         case 'openExtension':
           if (message.value) {
             this.selectedExtensionId = message.value;
-            await vscode.commands.executeCommand('extension.open', message.value);
+            void this.openExtension(message.value);
           }
           break;
 
@@ -136,6 +136,24 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
     }
 
     return roots;
+  }
+
+  private async setOpeningExtension(id: string, opening: boolean): Promise<void> {
+    await this.view?.webview.postMessage({
+      type: 'setOpeningExtension',
+      value: id,
+      opening,
+    });
+  }
+
+  private async openExtension(id: string): Promise<void> {
+    await this.setOpeningExtension(id, true);
+
+    try {
+      await vscode.commands.executeCommand('extension.open', id);
+    } finally {
+      await this.setOpeningExtension(id, false);
+    }
   }
 
   private async render(webviewView: vscode.WebviewView): Promise<void> {
@@ -352,6 +370,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
                   <span class="card-title">${escapeHtml(item.name)}</span>
                   ${kindText ? `<span class="badge kind-badge">${escapeHtml(kindText)}</span>` : ''}
                   <span class="badge status-badge ${statusClass}">${escapeHtml(statusText)}</span>
+                  <span class="badge opening-badge" hidden>Requested...</span>
                 </div>
                 <div class="publisher">${escapeHtml(item.publisher)}</div>
                 <div class="desc">${escapeHtml(item.description || 'No description')}</div>
@@ -399,6 +418,12 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
   <title>Installed Extensions</title>
   <style>
     :root { color-scheme: light dark; }
+
+    @keyframes openingPulse {
+      0% { opacity: 0.55; }
+      50% { opacity: 1; }
+      100% { opacity: 0.55; }
+    }
 
     body {
       font-family: var(--vscode-font-family);
@@ -545,6 +570,15 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       background: color-mix(in srgb, var(--vscode-list-activeSelectionBackground) 20%, var(--vscode-sideBar-background));
     }
 
+    .card.opening {
+      border-color: var(--vscode-progressBar-background, var(--vscode-focusBorder));
+      background: color-mix(in srgb, var(--vscode-progressBar-background, var(--vscode-focusBorder)) 12%, var(--vscode-sideBar-background));
+    }
+
+    .card.opening .icon {
+      animation: openingPulse 1s ease-in-out infinite;
+    }
+
     .card:focus-visible {
       outline: 1px solid var(--vscode-focusBorder);
       outline-offset: 2px;
@@ -592,6 +626,17 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
     .kind-badge {
       color: var(--vscode-descriptionForeground);
       background: transparent;
+    }
+
+    .opening-badge {
+      background: color-mix(in srgb, var(--vscode-progressBar-background, var(--vscode-focusBorder)) 18%, transparent);
+      color: var(--vscode-progressBar-background, var(--vscode-focusBorder));
+      border-color: color-mix(in srgb, var(--vscode-progressBar-background, var(--vscode-focusBorder)) 45%, transparent);
+      animation: openingPulse 1s ease-in-out infinite;
+    }
+
+    .opening-badge[hidden] {
+      display: none !important;
     }
 
     .status-badge.active {
@@ -647,6 +692,11 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
 
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+    let selectedCardId = ${JSON.stringify(selectedExtensionId ?? '')};
+    const openingCardIds = new Set();
+    const openingCardTimers = new Map();
+    const openingIndicatorDelayMs = 160;
+    let suppressCardClick = false;
 
     function sendExpandedGroups() {
       const expandedIds = Array.from(
@@ -660,6 +710,12 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
     }
 
     function setSelectedCard(id) {
+      if (selectedCardId === id) {
+        return;
+      }
+
+      selectedCardId = id;
+
       document.querySelectorAll('.card.selected').forEach((el) => {
         el.classList.remove('selected');
       });
@@ -675,8 +731,87 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       });
     }
 
+    function setOpeningCard(id, opening) {
+      const card = document.querySelector('.card[data-id="' + id + '"]');
+      if (!(card instanceof HTMLElement)) {
+        return;
+      }
+
+      const badge = card.querySelector('.opening-badge');
+      const existingTimer = openingCardTimers.get(id);
+      if (existingTimer) {
+        clearTimeout(existingTimer);
+        openingCardTimers.delete(id);
+      }
+
+      if (opening) {
+        openingCardIds.add(id);
+        card.setAttribute('aria-busy', 'true');
+
+        const timer = setTimeout(() => {
+          openingCardTimers.delete(id);
+          if (!openingCardIds.has(id)) {
+            return;
+          }
+
+          card.classList.add('opening');
+          if (badge instanceof HTMLElement) {
+            badge.hidden = false;
+          }
+        }, openingIndicatorDelayMs);
+
+        openingCardTimers.set(id, timer);
+      } else {
+        openingCardIds.delete(id);
+        card.classList.remove('opening');
+        card.removeAttribute('aria-busy');
+        if (badge instanceof HTMLElement) {
+          badge.hidden = true;
+        }
+      }
+    }
+
+    function openCard(id) {
+      setSelectedCard(id);
+      setOpeningCard(id, true);
+      vscode.postMessage({
+        type: 'openExtension',
+        value: id
+      });
+    }
+
     document.querySelectorAll('details.group').forEach((details) => {
       details.addEventListener('toggle', sendExpandedGroups);
+    });
+
+    window.addEventListener('message', (event) => {
+      const message = event.data;
+      if (!message || typeof message.type !== 'string') return;
+
+      if (message.type === 'setOpeningExtension') {
+        if (typeof message.value !== 'string' || typeof message.opening !== 'boolean') {
+          return;
+        }
+
+        setOpeningCard(message.value, message.opening);
+      }
+    });
+
+    document.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      if (target.dataset.action) return;
+
+      const card = target.closest('.card[data-id]');
+      if (!(card instanceof HTMLElement)) return;
+
+      const id = card.getAttribute('data-id');
+      if (!id) return;
+
+      suppressCardClick = true;
+      openCard(id);
     });
 
     document.addEventListener('click', (event) => {
@@ -695,15 +830,15 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       const card = target.closest('.card[data-id]');
       if (!(card instanceof HTMLElement)) return;
 
+      if (suppressCardClick) {
+        suppressCardClick = false;
+        return;
+      }
+
       const id = card.getAttribute('data-id');
       if (!id) return;
 
-      setSelectedCard(id);
-
-      vscode.postMessage({
-        type: 'openExtension',
-        value: id
-      });
+      openCard(id);
     });
 
     document.addEventListener('keydown', (event) => {
@@ -718,11 +853,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       if (!id) return;
 
       event.preventDefault();
-      setSelectedCard(id);
-      vscode.postMessage({
-        type: 'openExtension',
-        value: id
-      });
+      openCard(id);
     });
   </script>
 </body>
