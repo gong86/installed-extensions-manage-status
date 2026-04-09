@@ -8,7 +8,7 @@ type ExtensionItem = {
   description: string;
   iconUri?: vscode.Uri;
   isBuiltin: boolean;
-  isEnabled: boolean;
+  isActive: boolean;
 };
 
 type PackGroup = {
@@ -21,14 +21,14 @@ type PackGroup = {
 
 type SummaryCounts = {
   total: number;
-  enabled: number;
-  disabled: number;
+  active: number;
+  inactive: number;
   installed: number;
-  installedEnabled: number;
-  installedDisabled: number;
+  installedActive: number;
+  installedInactive: number;
   builtin: number;
-  builtinEnabled: number;
-  builtinDisabled: number;
+  builtinActive: number;
+  builtinInactive: number;
 };
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -84,26 +84,31 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
             void vscode.window.showInformationMessage(`Copied: ${message.value}`);
           }
           break;
+
         case 'copyInstall':
           if (message.value) {
             await vscode.env.clipboard.writeText(`code --install-extension ${message.value}`);
             void vscode.window.showInformationMessage(`Copied install command for ${message.value}`);
           }
           break;
+
         case 'openMarketplace':
           if (message.value) {
             await vscode.env.openExternal(vscode.Uri.parse(message.value));
           }
           break;
+
         case 'manage':
           if (message.value) {
             await vscode.commands.executeCommand('workbench.view.extensions');
             await vscode.commands.executeCommand('workbench.extensions.search', message.value);
           }
           break;
+
         case 'refresh':
           await this.render(webviewView);
           break;
+
         default:
           break;
       }
@@ -156,8 +161,6 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
           }
         }
 
-        const extAny = ext as unknown as { isActive?: boolean };
-
         return {
           id: ext.id,
           publisher,
@@ -166,7 +169,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
           description: packageJson.description ?? '',
           iconUri,
           isBuiltin: packageJson.isBuiltin === true,
-          isEnabled: extAny.isActive === true,
+          isActive: ext.isActive === true,
         } satisfies ExtensionItem;
       })
       .sort((a, b) => a.id.localeCompare(b.id));
@@ -178,14 +181,14 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
 
     return {
       total: items.length,
-      enabled: items.filter((item) => item.isEnabled).length,
-      disabled: items.filter((item) => !item.isEnabled).length,
+      active: items.filter((item) => item.isActive).length,
+      inactive: items.filter((item) => !item.isActive).length,
       installed: installed.length,
-      installedEnabled: installed.filter((item) => item.isEnabled).length,
-      installedDisabled: installed.filter((item) => !item.isEnabled).length,
+      installedActive: installed.filter((item) => item.isActive).length,
+      installedInactive: installed.filter((item) => !item.isActive).length,
       builtin: builtin.length,
-      builtinEnabled: builtin.filter((item) => item.isEnabled).length,
-      builtinDisabled: builtin.filter((item) => !item.isEnabled).length,
+      builtinActive: builtin.filter((item) => item.isActive).length,
+      builtinInactive: builtin.filter((item) => !item.isActive).length,
     };
   }
 
@@ -201,6 +204,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
           description?: string;
           extensionPack?: string[];
         };
+
         return {
           id: ext.id,
           label: packageJson.displayName ?? ext.id,
@@ -236,6 +240,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
     const notInPack = items.filter(
       (item) => !assigned.has(item.id) && !packExtensions.some((pack) => pack.id === item.id)
     );
+
     const installed = notInPack.filter((item) => !item.isBuiltin);
     const builtin = notInPack.filter((item) => item.isBuiltin);
 
@@ -273,24 +278,24 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
         <div class="stat-card">
           <div class="stat-label">Total</div>
           <div class="stat-value">${counts.total}</div>
-          <div class="stat-sub">Enabled ${counts.enabled} · Disabled ${counts.disabled}</div>
+          <div class="stat-sub">Active ${counts.active} · Installed ${counts.inactive}</div>
         </div>
         <div class="stat-card">
           <div class="stat-label">Installed</div>
           <div class="stat-value">${counts.installed}</div>
-          <div class="stat-sub">Enabled ${counts.installedEnabled} · Disabled ${counts.installedDisabled}</div>
+          <div class="stat-sub">Active ${counts.installedActive} · Installed ${counts.installedInactive}</div>
         </div>
         <div class="stat-card">
           <div class="stat-label">Built-in</div>
           <div class="stat-value">${counts.builtin}</div>
-          <div class="stat-sub">Enabled ${counts.builtinEnabled} · Disabled ${counts.builtinDisabled}</div>
+          <div class="stat-sub">Active ${counts.builtinActive} · Installed ${counts.builtinInactive}</div>
         </div>
       </div>
     `;
 
     const sections = groups.map((group, index) => {
-      const enabledCount = group.items.filter((item) => item.isEnabled).length;
-      const disabledCount = group.items.length - enabledCount;
+      const activeCount = group.items.filter((item) => item.isActive).length;
+      const inactiveCount = group.items.length - activeCount;
 
       const cards = group.items.map((item) => {
         const icon = item.iconUri
@@ -299,8 +304,8 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
 
         const marketplaceUrl =
           `https://marketplace.visualstudio.com/items?itemName=${encodeURIComponent(item.id)}`;
-        const statusClass = item.isEnabled ? 'enabled' : 'disabled';
-        const statusText = item.isEnabled ? 'Enabled' : 'Disabled';
+        const statusClass = item.isActive ? 'active' : 'inactive';
+        const statusText = item.isActive ? 'Active' : 'Installed';
         const kindText = item.isBuiltin ? 'Built-in' : 'Installed';
 
         return `
@@ -341,7 +346,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
                 <span class="group-count">${group.items.length}</span>
               </div>
               <div class="group-desc">${escapeHtml(group.description || '')}</div>
-              <div class="group-meta">Enabled ${enabledCount} · Disabled ${disabledCount}</div>
+              <div class="group-meta">Active ${activeCount} · Installed ${inactiveCount}</div>
             </div>
           </summary>
           <div class="group-body">
@@ -360,6 +365,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
   <title>Installed Extensions</title>
   <style>
     :root { color-scheme: light dark; }
+
     body {
       font-family: var(--vscode-font-family);
       color: var(--vscode-foreground);
@@ -367,6 +373,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       padding: 12px;
       margin: 0;
     }
+
     .toolbar {
       display: flex;
       gap: 8px;
@@ -378,7 +385,9 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       padding-bottom: 8px;
       z-index: 2;
     }
-    button, .title-link {
+
+    button,
+    .title-link {
       border: 1px solid var(--vscode-button-border, transparent);
       background: var(--vscode-button-background);
       color: var(--vscode-button-foreground);
@@ -387,6 +396,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       cursor: pointer;
       font: inherit;
     }
+
     .title-link {
       background: transparent;
       color: var(--vscode-textLink-foreground);
@@ -396,41 +406,50 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       font-size: 13px;
       font-weight: 600;
     }
-    button:hover, .title-link:hover {
+
+    button:hover,
+    .title-link:hover {
       background: var(--vscode-button-hoverBackground);
     }
+
     .count {
       color: var(--vscode-descriptionForeground);
       font-size: 12px;
       margin-left: auto;
     }
+
     .stats-grid {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 10px;
       margin-bottom: 12px;
     }
+
     .stat-card {
       border: 1px solid var(--vscode-panel-border);
       border-radius: 10px;
       padding: 10px;
       background: var(--vscode-editorWidget-background, var(--vscode-sideBar-background));
     }
+
     .stat-label {
       font-size: 12px;
       color: var(--vscode-descriptionForeground);
     }
+
     .stat-value {
       font-size: 22px;
       font-weight: 700;
       margin-top: 4px;
     }
+
     .stat-sub {
       font-size: 12px;
       color: var(--vscode-descriptionForeground);
       margin-top: 4px;
       line-height: 1.35;
     }
+
     .group {
       border: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-panel-border));
       border-radius: 10px;
@@ -438,45 +457,58 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       overflow: hidden;
       background: var(--vscode-editorWidget-background, var(--vscode-sideBar-background));
     }
+
     summary {
       list-style: none;
       cursor: pointer;
       padding: 10px 12px;
       background: color-mix(in srgb, var(--vscode-sideBar-background) 80%, transparent);
     }
-    summary::-webkit-details-marker { display: none; }
+
+    summary::-webkit-details-marker {
+      display: none;
+    }
+
     .group-title-row {
       display: flex;
       flex-direction: column;
       gap: 4px;
     }
+
     .group-title-wrap {
       display: flex;
       align-items: center;
       gap: 8px;
       font-weight: 600;
     }
-    .group-count, .group-meta, .group-desc {
+
+    .group-count,
+    .group-meta,
+    .group-desc {
       color: var(--vscode-descriptionForeground);
       font-size: 12px;
     }
+
     .group-body {
       display: grid;
       gap: 10px;
       padding: 10px;
     }
+
     .card {
       border: 1px solid var(--vscode-panel-border);
       background: var(--vscode-sideBar-background);
       border-radius: 10px;
       padding: 10px;
     }
+
     .card-main {
       display: grid;
       grid-template-columns: 40px 1fr auto;
       gap: 10px;
       align-items: start;
     }
+
     .icon {
       width: 36px;
       height: 36px;
@@ -485,18 +517,21 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       background: var(--vscode-editor-background);
       border: 1px solid var(--vscode-panel-border);
     }
+
     .fallback {
       display: flex;
       align-items: center;
       justify-content: center;
       font-size: 20px;
     }
+
     .title-row {
       display: flex;
       flex-wrap: wrap;
       gap: 6px;
       align-items: center;
     }
+
     .badge {
       display: inline-flex;
       align-items: center;
@@ -506,38 +541,48 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       font-size: 11px;
       line-height: 1.2;
     }
+
     .kind-badge {
       color: var(--vscode-descriptionForeground);
       background: transparent;
     }
-    .status-badge.enabled {
+
+    .status-badge.active {
       background: color-mix(in srgb, var(--vscode-testing-iconPassed) 20%, transparent);
       color: var(--vscode-testing-iconPassed);
       border-color: color-mix(in srgb, var(--vscode-testing-iconPassed) 55%, transparent);
     }
-    .status-badge.disabled {
-      background: color-mix(in srgb, var(--vscode-errorForeground) 18%, transparent);
-      color: var(--vscode-errorForeground);
-      border-color: color-mix(in srgb, var(--vscode-errorForeground) 45%, transparent);
+
+    .status-badge.inactive {
+      background: color-mix(in srgb, var(--vscode-descriptionForeground) 16%, transparent);
+      color: var(--vscode-descriptionForeground);
+      border-color: color-mix(in srgb, var(--vscode-descriptionForeground) 35%, transparent);
     }
-    .publisher, .desc, .version {
+
+    .publisher,
+    .desc,
+    .version {
       color: var(--vscode-descriptionForeground);
       font-size: 12px;
     }
+
     .publisher {
       margin-top: 4px;
       font-weight: 500;
     }
+
     .desc {
       margin-top: 6px;
       line-height: 1.35;
     }
+
     .actions {
       display: flex;
       gap: 8px;
       flex-wrap: wrap;
       margin-top: 10px;
     }
+
     .actions button {
       padding: 4px 8px;
       font-size: 12px;
@@ -549,16 +594,24 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
     <button data-action="refresh">Refresh</button>
     <div class="count">${counts.total} total</div>
   </div>
+
   ${statsHtml}
   ${sections}
+
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+
     document.addEventListener('click', (event) => {
       const target = event.target;
       if (!(target instanceof HTMLElement)) return;
+
       const action = target.dataset.action;
       if (!action) return;
-      vscode.postMessage({ type: action, value: target.dataset.value });
+
+      vscode.postMessage({
+        type: action,
+        value: target.dataset.value
+      });
     });
   </script>
 </body>
@@ -569,9 +622,11 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
 function getNonce(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
   let value = '';
+
   for (let i = 0; i < 32; i += 1) {
     value += chars.charAt(Math.floor(Math.random() * chars.length));
   }
+
   return value;
 }
 
