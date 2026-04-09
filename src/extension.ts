@@ -57,6 +57,8 @@ export function deactivate(): void {}
 
 class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
+  private expandedGroupIds = new Set<string>();
+  private hasInitializedExpandedGroups = false;
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -76,7 +78,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       localResourceRoots: this.getLocalResourceRoots(),
     };
 
-    webviewView.webview.onDidReceiveMessage(async (message: { type: string; value?: string }) => {
+    webviewView.webview.onDidReceiveMessage(async (message: { type: string; value?: string; expandedIds?: string[] }) => {
       switch (message.type) {
         case 'copyId':
           if (message.value) {
@@ -103,6 +105,10 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
             await vscode.commands.executeCommand('workbench.view.extensions');
             await vscode.commands.executeCommand('workbench.extensions.search', message.value);
           }
+          break;
+
+        case 'setExpandedGroups':
+          this.expandedGroupIds = new Set(message.expandedIds ?? []);
           break;
 
         case 'refresh':
@@ -134,8 +140,17 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
     const groups = this.getPackGroups(items);
     const counts = this.getCounts(items);
 
+    if (!this.hasInitializedExpandedGroups) {
+      this.hasInitializedExpandedGroups = true;
+    } else {
+      const validGroupIds = new Set(groups.map((group) => group.id));
+      this.expandedGroupIds = new Set(
+        [...this.expandedGroupIds].filter((id) => validGroupIds.has(id))
+      );
+    }
+
     webviewView.description = `${counts.total} total`;
-    webview.html = this.getHtml(webview, nonce, groups, counts);
+    webview.html = this.getHtml(webview, nonce, groups, counts, this.expandedGroupIds);
   }
 
   private getItems(webview: vscode.Webview): ExtensionItem[] {
@@ -271,7 +286,8 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
     webview: vscode.Webview,
     nonce: string,
     groups: PackGroup[],
-    counts: SummaryCounts
+    counts: SummaryCounts,
+    expandedGroupIds: Set<string>
   ): string {
     const statsHtml = `
       <div class="stats-grid">
@@ -293,7 +309,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       </div>
     `;
 
-    const sections = groups.map((group, index) => {
+    const sections = groups.map((group) => {
       const activeCount = group.items.filter((item) => item.isActive).length;
       const inactiveCount = group.items.length - activeCount;
 
@@ -335,10 +351,10 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
         `;
       }).join('\n');
 
-      const openAttr = '';
+      const openAttr = expandedGroupIds.has(group.id) ? 'open' : '';
 
       return `
-        <details class="group" ${openAttr}>
+        <details class="group" data-group-id="${escapeHtml(group.id)}" ${openAttr}>
           <summary>
             <div class="group-title-row">
               <div class="group-title-wrap">
@@ -600,6 +616,21 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
 
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
+
+    function sendExpandedGroups() {
+      const expandedIds = Array.from(
+        document.querySelectorAll('details.group[open][data-group-id]')
+      ).map((el) => el.getAttribute('data-group-id')).filter(Boolean);
+
+      vscode.postMessage({
+        type: 'setExpandedGroups',
+        expandedIds
+      });
+    }
+
+    document.querySelectorAll('details.group').forEach((details) => {
+      details.addEventListener('toggle', sendExpandedGroups);
+    });
 
     document.addEventListener('click', (event) => {
       const target = event.target;
