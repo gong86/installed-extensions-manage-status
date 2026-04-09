@@ -102,8 +102,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
 
         case 'manage':
           if (message.value) {
-            await vscode.commands.executeCommand('workbench.view.extensions');
-            await vscode.commands.executeCommand('workbench.extensions.search', message.value);
+            await vscode.commands.executeCommand('extension.open', message.value);
           }
           break;
 
