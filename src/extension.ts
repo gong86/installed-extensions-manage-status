@@ -647,6 +647,22 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       });
     }
 
+    function setSelectedCard(id) {
+      document.querySelectorAll('.card.selected').forEach((el) => {
+        el.classList.remove('selected');
+      });
+
+      const next = document.querySelector('.card[data-id="' + id + '"]');
+      if (next) {
+        next.classList.add('selected');
+      }
+
+      vscode.postMessage({
+        type: 'setSelectedExtension',
+        value: id
+      });
+    }
+
     document.querySelectorAll('details.group').forEach((details) => {
       details.addEventListener('toggle', sendExpandedGroups);
     });
@@ -695,20 +711,4 @@ function escapeHtml(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
-}
-
-function setSelectedCard(id) {
-  document.querySelectorAll('.card.selected').forEach((el) => {
-    el.classList.remove('selected');
-  });
-
-  const next = document.querySelector(`.card[data-id="${CSS.escape(id)}"]`);
-  if (next) {
-    next.classList.add('selected');
-  }
-
-  vscode.postMessage({
-    type: 'setSelectedExtension',
-    value: id
-  });
 }
