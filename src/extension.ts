@@ -335,7 +335,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
         `;
       }).join('\n');
 
-      const openAttr = index < 3 ? 'open' : '';
+      const openAttr = '';
 
       return `
         <details class="group" ${openAttr}>
