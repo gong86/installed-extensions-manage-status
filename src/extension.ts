@@ -64,6 +64,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
   private hasInitializedExpandedGroups = false;
   private selectedExtensionId?: string;
   private groupMode: GroupMode = 'pack';
+  private showBuiltin = false;
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -133,6 +134,12 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
           }
           break;
 
+        case 'setShowBuiltin':
+          this.showBuiltin = message.value === 'true';
+          this.expandedGroupIds.clear();
+          await this.render(webviewView);
+          break;
+
         case 'refresh':
           await this.render(webviewView);
           break;
@@ -177,27 +184,31 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
     const webview = webviewView.webview;
     const nonce = getNonce();
     const items = this.getItems(webview);
-    const groups = this.getGroups(items);
     const counts = this.getCounts(items);
+    const filteredItems = this.showBuiltin ? items : items.filter((item) => !item.isBuiltin);
+    const filteredGroups = this.getGroups(filteredItems);
+    const filteredCounts = this.getCounts(filteredItems);
 
     if (!this.hasInitializedExpandedGroups) {
       this.hasInitializedExpandedGroups = true;
     } else {
-      const validGroupIds = new Set(groups.map((group) => group.id));
+      const validGroupIds = new Set(filteredGroups.map((group) => group.id));
       this.expandedGroupIds = new Set(
         [...this.expandedGroupIds].filter((id) => validGroupIds.has(id))
       );
     }
 
-    webviewView.description = `${counts.total} total`;
+    webviewView.description = `${counts.total} total (${counts.builtin} built-in)`;
+
     webview.html = this.getHtml(
       webview,
       nonce,
-      groups,
-      counts,
+      filteredGroups,
+      filteredCounts,
       this.expandedGroupIds,
       this.selectedExtensionId,
-      this.groupMode
+      this.groupMode,
+      this.showBuiltin
     );
   }
 
@@ -438,10 +449,11 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
     counts: SummaryCounts,
     expandedGroupIds: Set<string>,
     selectedExtensionId?: string,
-    groupMode: GroupMode = 'pack'
+    groupMode: GroupMode = 'pack',
+    showBuiltin = true
   ): string {
-    const statsHtml = `
-      <div class="stats-grid">
+    const statsHtml = showBuiltin ? `
+      <div class="stats-grid" style="grid-template-columns: repeat(3, minmax(0, 1fr));">
         <div class="stat-card">
           <div class="stat-label">Total</div>
           <div class="stat-value">${counts.total}</div>
@@ -456,6 +468,14 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
           <div class="stat-label">Built-in</div>
           <div class="stat-value">${counts.builtin}</div>
           <div class="stat-sub">Active ${counts.builtinActive} · Idle ${counts.builtinInactive}</div>
+        </div>
+      </div>
+    ` : `
+      <div class="stats-grid" style="grid-template-columns: 1fr;">
+        <div class="stat-card">
+          <div class="stat-label">Installed</div>
+          <div class="stat-value">${counts.installed}</div>
+          <div class="stat-sub">Active ${counts.installedActive} · Idle ${counts.installedInactive}</div>
         </div>
       </div>
     `;
@@ -820,7 +840,6 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
 </head>
 <body>
   <div class="toolbar">
-    <button data-action="refresh">Refresh</button>
     <label class="group-mode-control">
       <span>Group</span>
       <select id="group-mode-select">
@@ -830,7 +849,10 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
         <option value="category-all"${groupMode === 'category-all' ? ' selected' : ''}>Category (All)</option>
       </select>
     </label>
-    <div class="count">${counts.total} total</div>
+    <label class="group-mode-control">
+      <input type="checkbox" id="show-builtin-checkbox"${showBuiltin ? ' checked' : ''} />
+      <span>Built-in</span>
+    </label>
   </div>
 
   ${statsHtml}
@@ -936,6 +958,16 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
         vscode.postMessage({
           type: 'setGroupMode',
           value: groupModeSelect.value
+        });
+      });
+    }
+
+    const showBuiltinCheckbox = document.getElementById('show-builtin-checkbox');
+    if (showBuiltinCheckbox instanceof HTMLInputElement) {
+      showBuiltinCheckbox.addEventListener('change', () => {
+        vscode.postMessage({
+          type: 'setShowBuiltin',
+          value: showBuiltinCheckbox.checked ? 'true' : 'false'
         });
       });
     }
