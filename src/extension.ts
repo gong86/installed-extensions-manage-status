@@ -54,6 +54,36 @@ export function activate(context: vscode.ExtensionContext): void {
       provider.refresh();
     })
   );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('installedExtensionsManageStatus.groupByPack', () => {
+      provider.setGroupMode('pack');
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('installedExtensionsManageStatus.groupByPublisher', () => {
+      provider.setGroupMode('publisher');
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('installedExtensionsManageStatus.groupByCategory', () => {
+      provider.setGroupMode('category');
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('installedExtensionsManageStatus.groupByCategoryAll', () => {
+      provider.setGroupMode('category-all');
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('installedExtensionsManageStatus.toggleBuiltin', () => {
+      provider.toggleBuiltin();
+    })
+  );
 }
 
 export function deactivate(): void {}
@@ -69,6 +99,22 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
   constructor(private readonly context: vscode.ExtensionContext) {}
 
   public refresh(): void {
+    if (this.view) {
+      void this.render(this.view);
+    }
+  }
+
+  public setGroupMode(mode: GroupMode): void {
+    this.groupMode = mode;
+    this.expandedGroupIds.clear();
+    if (this.view) {
+      void this.render(this.view);
+    }
+  }
+
+  public toggleBuiltin(): void {
+    this.showBuiltin = !this.showBuiltin;
+    this.expandedGroupIds.clear();
     if (this.view) {
       void this.render(this.view);
     }
@@ -110,6 +156,30 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
           if (message.value) {
             this.selectedExtensionId = message.value;
             void this.openExtension(message.value);
+          }
+          break;
+
+        case 'searchPublisher':
+          if (message.value) {
+            const displayName = this.getPublisherDisplayNames().get(message.value);
+            const query = displayName
+              ? `publisher:"${displayName}"`
+              : `@publisher:${message.value}`;
+            void vscode.commands.executeCommand('workbench.extensions.search', query);
+            await this.view?.webview.postMessage({
+              type: 'resetGroupBtn',
+              value: message.value,
+            });
+          }
+          break;
+
+        case 'searchCategory':
+          if (message.value) {
+            void vscode.commands.executeCommand('workbench.extensions.search', `@category:"${message.value}"`);
+            await this.view?.webview.postMessage({
+              type: 'resetGroupBtn',
+              value: message.value,
+            });
           }
           break;
 
@@ -361,8 +431,44 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
     return groups;
   }
 
+  private getPublisherDisplayNames(): Map<string, string> {
+    const names = new Map<string, string>();
+
+    // Read from VS Code's extensions.json which has publisherDisplayName
+    try {
+      const fs = require('fs') as typeof import('fs');
+      const path = require('path') as typeof import('path');
+
+      // Extensions live alongside the VS Code CLI in ~/.vscode/extensions/
+      // Derive path from any installed extension's extensionPath
+      const anyInstalled = vscode.extensions.all.find(
+        (ext) => !(ext.packageJSON as { isBuiltin?: boolean }).isBuiltin
+      );
+      if (anyInstalled) {
+        const extensionsDir = path.dirname(anyInstalled.extensionPath);
+        const extensionsJsonPath = path.join(extensionsDir, 'extensions.json');
+        const data = JSON.parse(fs.readFileSync(extensionsJsonPath, 'utf8')) as Array<{
+          identifier?: { id?: string };
+          metadata?: { publisherDisplayName?: string };
+        }>;
+        for (const entry of data) {
+          if (!entry.identifier?.id || !entry.metadata?.publisherDisplayName) continue;
+          const [publisherId] = entry.identifier.id.split('.');
+          if (!names.has(publisherId)) {
+            names.set(publisherId, entry.metadata.publisherDisplayName);
+          }
+        }
+      }
+    } catch {
+      // Ignore — fall through to empty map, labels will use publisher ID
+    }
+
+    return names;
+  }
+
   private getPublisherGroups(items: ExtensionItem[]): PackGroup[] {
     const groupsByPublisher = new Map<string, ExtensionItem[]>();
+    const displayNames = this.getPublisherDisplayNames();
 
     for (const item of items) {
       const publisher = item.publisher || 'unknown';
@@ -375,8 +481,13 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
     }
 
     return [...groupsByPublisher.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
+      .sort(([a], [b]) => {
+        const aName = displayNames.get(a) ?? a;
+        const bName = displayNames.get(b) ?? b;
+        return aName.localeCompare(bName);
+      })
       .map(([publisher, publisherItems]) => {
+        const displayName = displayNames.get(publisher) ?? publisher;
         const installedCount = publisherItems.filter((item) => !item.isBuiltin).length;
         const builtinCount = publisherItems.length - installedCount;
         const descriptionParts: string[] = [];
@@ -391,7 +502,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
 
         return {
           id: `publisher:${publisher}`,
-          label: publisher,
+          label: displayName,
           description: descriptionParts.join(' · '),
           items: publisherItems.sort((a, b) => a.id.localeCompare(b.id)),
           isPack: false,
@@ -529,23 +640,36 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       }).join('\n');
 
       const openAttr = expandedGroupIds.has(group.id) ? 'open' : '';
+      let groupOpenButton = '';
+      if (group.isPack) {
+        groupOpenButton = `<button class="group-open-btn" data-action="openExtension" data-value="${escapeHtml(group.id)}">Open</button>`;
+      } else if (group.id.startsWith('publisher:')) {
+        const publisher = group.id.slice('publisher:'.length);
+        groupOpenButton = `<button class="group-open-btn" data-action="searchPublisher" data-value="${escapeHtml(publisher)}">Search</button>`;
+      } else if (group.id.startsWith('category:')) {
+        const category = group.id.slice('category:'.length);
+        groupOpenButton = `<button class="group-open-btn" data-action="searchCategory" data-value="${escapeHtml(category)}">Search</button>`;
+      }
 
       return `
-        <details class="group" data-group-id="${escapeHtml(group.id)}" ${openAttr}>
-          <summary>
-            <div class="group-title-row">
-              <div class="group-title-wrap">
-                <span class="group-title">${escapeHtml(group.label)}</span>
-                <span class="group-count">${group.items.length}</span>
+        <div class="group-wrapper">
+          ${groupOpenButton ? `<div class="group-open-wrap">${groupOpenButton}</div>` : ''}
+          <details class="group" data-group-id="${escapeHtml(group.id)}" ${openAttr}>
+            <summary>
+              <div class="group-title-row">
+                <div class="group-title-wrap">
+                  <span class="group-title">${escapeHtml(group.label)}</span>
+                  <span class="group-count">${group.items.length}</span>
+                </div>
+                <div class="group-desc">${escapeHtml(group.description || '')}</div>
+                <div class="group-meta">Active ${activeCount} · Idle ${inactiveCount}</div>
               </div>
-              <div class="group-desc">${escapeHtml(group.description || '')}</div>
-              <div class="group-meta">Active ${activeCount} · Idle ${inactiveCount}</div>
+            </summary>
+            <div class="group-body">
+              ${cards}
             </div>
-          </summary>
-          <div class="group-body">
-            ${cards}
-          </div>
-        </details>
+          </details>
+        </div>
       `;
     }).join('\n');
 
@@ -660,10 +784,14 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       line-height: 1.35;
     }
 
+    .group-wrapper {
+      position: relative;
+      margin-bottom: 10px;
+    }
+
     .group {
       border: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-panel-border));
       border-radius: 10px;
-      margin-bottom: 10px;
       overflow: hidden;
       background: var(--vscode-editorWidget-background, var(--vscode-sideBar-background));
     }
@@ -836,6 +964,31 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       padding: 4px 8px;
       font-size: 12px;
     }
+
+    .group-open-wrap {
+      position: absolute;
+      top: 10px;
+      right: 12px;
+      z-index: 1;
+    }
+
+    .group-open-btn {
+      padding: 2px 8px;
+      font-size: 11px;
+      border-radius: 4px;
+      transition: transform 80ms ease, background-color 80ms ease;
+    }
+
+    .group-open-btn:active {
+      transform: scale(0.95);
+      background: var(--vscode-button-hoverBackground);
+    }
+
+    .group-open-btn.opening {
+      opacity: 0.6;
+      pointer-events: none;
+      animation: openingPulse 1s ease-in-out infinite;
+    }
   </style>
 </head>
 <body>
@@ -982,6 +1135,26 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
         }
 
         setOpeningCard(message.value, message.opening);
+
+        const groupBtn = document.querySelector('.group-open-btn[data-value="' + message.value + '"]');
+        if (groupBtn instanceof HTMLElement) {
+          if (message.opening) {
+            groupBtn.classList.add('opening');
+            groupBtn.textContent = 'Opening\u2026';
+          } else {
+            groupBtn.classList.remove('opening');
+            groupBtn.textContent = 'Open';
+          }
+        }
+      }
+
+      if (message.type === 'resetGroupBtn') {
+        const groupBtn = document.querySelector('.group-open-btn[data-value="' + message.value + '"]');
+        if (groupBtn instanceof HTMLElement) {
+          groupBtn.classList.remove('opening');
+          const action = groupBtn.dataset.action;
+          groupBtn.textContent = action === 'openExtension' ? 'Open' : 'Search';
+        }
       }
     });
 
@@ -990,6 +1163,18 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
 
       const target = event.target;
       if (!(target instanceof HTMLElement)) return;
+
+      if (target.classList.contains('group-open-btn')) {
+        const action = target.dataset.action;
+        const value = target.dataset.value;
+        if (action && value) {
+          target.classList.add('opening');
+          target.textContent = action === 'openExtension' ? 'Opening\u2026' : 'Searching\u2026';
+          vscode.postMessage({ type: action, value: value });
+        }
+        return;
+      }
+
       if (target.dataset.action) return;
 
       const card = target.closest('.card[data-id]');
@@ -1006,8 +1191,11 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       const target = event.target;
       if (!(target instanceof HTMLElement)) return;
 
+      if (target.classList.contains('group-open-btn')) return;
+
       const action = target.dataset.action;
       if (action) {
+        event.preventDefault();
         vscode.postMessage({
           type: action,
           value: target.dataset.value

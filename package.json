@@ -2,7 +2,7 @@
   "name": "installed-extensions-manage-status",
   "displayName": "Installed Extensions Manage Status",
   "description": "Browse installed VS Code extensions with pack grouping, status badges, and quick manage actions.",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "publisher": "gonghui",
   "license": "MIT",
   "repository": {
@@ -58,8 +58,28 @@
     "commands": [
       {
         "command": "installedExtensionsManageStatus.refresh",
-        "title": "Refresh Status",
+        "title": "Refresh",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "installedExtensionsManageStatus.groupByPack",
+        "title": "Group by Pack"
+      },
+      {
+        "command": "installedExtensionsManageStatus.groupByPublisher",
+        "title": "Group by Publisher"
+      },
+      {
+        "command": "installedExtensionsManageStatus.groupByCategory",
+        "title": "Group by Category"
+      },
+      {
+        "command": "installedExtensionsManageStatus.groupByCategoryAll",
+        "title": "Group by Category (All)"
+      },
+      {
+        "command": "installedExtensionsManageStatus.toggleBuiltin",
+        "title": "Toggle Built-in"
       }
     ],
     "menus": {
@@ -68,6 +88,31 @@
           "command": "installedExtensionsManageStatus.refresh",
           "when": "view == installedExtensionsManageStatusView",
           "group": "navigation"
+        },
+        {
+          "command": "installedExtensionsManageStatus.groupByPack",
+          "when": "view == installedExtensionsManageStatusView",
+          "group": "1_group@1"
+        },
+        {
+          "command": "installedExtensionsManageStatus.groupByPublisher",
+          "when": "view == installedExtensionsManageStatusView",
+          "group": "1_group@2"
+        },
+        {
+          "command": "installedExtensionsManageStatus.groupByCategory",
+          "when": "view == installedExtensionsManageStatusView",
+          "group": "1_group@3"
+        },
+        {
+          "command": "installedExtensionsManageStatus.groupByCategoryAll",
+          "when": "view == installedExtensionsManageStatusView",
+          "group": "1_group@4"
+        },
+        {
+          "command": "installedExtensionsManageStatus.toggleBuiltin",
+          "when": "view == installedExtensionsManageStatusView",
+          "group": "2_filter@1"
         }
       ]
     }
