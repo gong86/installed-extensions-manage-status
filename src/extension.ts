@@ -1,15 +1,63 @@
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import * as vscode from 'vscode';
 
 type ExtensionItem = {
   id: string;
   publisher: string;
   name: string;
+  displayName: string;
   categories: string[];
   version: string;
   description: string;
   iconUri?: vscode.Uri;
+  extensionPack: string[];
+  extensionPath?: string;
   isBuiltin: boolean;
   isActive: boolean;
+  isDisabled: boolean;
+};
+
+type ExtensionManifest = {
+  name?: string;
+  publisher?: string;
+  displayName?: string;
+  version?: string;
+  description?: string;
+  icon?: string;
+  isBuiltin?: boolean;
+  categories?: string[];
+  extensionPack?: string[];
+};
+
+type ExtensionsJsonEntry = {
+  identifier?: {
+    id?: string;
+  };
+  version?: string;
+  location?: {
+    path?: string;
+    fsPath?: string;
+  };
+  relativeLocation?: string;
+  metadata?: {
+    isBuiltin?: boolean;
+    publisherDisplayName?: string;
+  };
+};
+
+type InstalledExtensionRecord = {
+  id: string;
+  extensionPath?: string;
+  version?: string;
+  isBuiltin: boolean;
+  publisherDisplayName?: string;
+};
+
+type ExtensionInventory = {
+  items: ExtensionItem[];
+  localResourceRoots: vscode.Uri[];
 };
 
 type PackGroup = {
@@ -24,18 +72,23 @@ type SummaryCounts = {
   total: number;
   active: number;
   inactive: number;
+  disabled: number;
   installed: number;
   installedActive: number;
   installedInactive: number;
+  installedDisabled: number;
   builtin: number;
   builtinActive: number;
   builtinInactive: number;
+  builtinDisabled: number;
 };
 
 type GroupMode = 'pack' | 'publisher' | 'category' | 'category-all';
 
 export function activate(context: vscode.ExtensionContext): void {
   const provider = new InstalledExtensionsWebviewProvider(context);
+
+  context.subscriptions.push(provider);
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
@@ -84,24 +137,88 @@ export function activate(context: vscode.ExtensionContext): void {
       provider.toggleBuiltin();
     })
   );
+
+  context.subscriptions.push(
+    vscode.extensions.onDidChange(() => {
+      provider.scheduleRefresh();
+    })
+  );
 }
 
 export function deactivate(): void {}
 
-class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
+class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   private view?: vscode.WebviewView;
   private expandedGroupIds = new Set<string>();
   private hasInitializedExpandedGroups = false;
   private selectedExtensionId?: string;
   private groupMode: GroupMode = 'pack';
   private showBuiltin = false;
+  private refreshHandle?: NodeJS.Timeout;
+  private activityPollHandle?: NodeJS.Timeout;
+  private lastRuntimeActivitySignature = '';
 
   constructor(private readonly context: vscode.ExtensionContext) {}
+
+  public dispose(): void {
+    if (this.refreshHandle) {
+      clearTimeout(this.refreshHandle);
+      this.refreshHandle = undefined;
+    }
+
+    this.stopActivityPolling();
+  }
 
   public refresh(): void {
     if (this.view) {
       void this.render(this.view);
     }
+  }
+
+  public scheduleRefresh(delayMs = 150): void {
+    if (this.refreshHandle) {
+      clearTimeout(this.refreshHandle);
+    }
+
+    this.refreshHandle = setTimeout(() => {
+      this.refreshHandle = undefined;
+      this.refresh();
+    }, delayMs);
+  }
+
+  private stopActivityPolling(): void {
+    if (this.activityPollHandle) {
+      clearInterval(this.activityPollHandle);
+      this.activityPollHandle = undefined;
+    }
+  }
+
+  private updateActivityPolling(): void {
+    if (!this.view?.visible) {
+      this.stopActivityPolling();
+      return;
+    }
+
+    if (this.activityPollHandle) {
+      return;
+    }
+
+    this.activityPollHandle = setInterval(() => {
+      const nextSignature = this.getRuntimeActivitySignature();
+      if (nextSignature === this.lastRuntimeActivitySignature) {
+        return;
+      }
+
+      this.lastRuntimeActivitySignature = nextSignature;
+      this.refresh();
+    }, 1200);
+  }
+
+  private getRuntimeActivitySignature(): string {
+    return vscode.extensions.all
+      .map((ext) => `${ext.id.toLowerCase()}:${ext.isActive ? '1' : '0'}`)
+      .sort((a, b) => a.localeCompare(b))
+      .join('|');
   }
 
   public setGroupMode(mode: GroupMode): void {
@@ -127,8 +244,15 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
 
     webviewView.webview.options = {
       enableScripts: true,
-      localResourceRoots: this.getLocalResourceRoots(),
+      localResourceRoots: [this.context.extensionUri],
     };
+
+    webviewView.onDidChangeVisibility(() => {
+      this.updateActivityPolling();
+      if (webviewView.visible) {
+        this.scheduleRefresh(50);
+      }
+    });
 
     webviewView.webview.onDidReceiveMessage(async (message: { type: string; value?: string; expandedIds?: string[]; opening?: boolean }) => {
       switch (message.type) {
@@ -161,7 +285,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
 
         case 'searchPublisher':
           if (message.value) {
-            const displayName = this.getPublisherDisplayNames().get(message.value);
+            const displayName = this.getPublisherDisplayNames().get(message.value.toLowerCase());
             const query = displayName
               ? `publisher:"${displayName}"`
               : `@publisher:${message.value}`;
@@ -220,16 +344,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
     });
 
     await this.render(webviewView);
-  }
-
-  private getLocalResourceRoots(): vscode.Uri[] {
-    const roots: vscode.Uri[] = [this.context.extensionUri];
-
-    for (const ext of vscode.extensions.all) {
-      roots.push(vscode.Uri.file(ext.extensionPath));
-    }
-
-    return roots;
+    this.updateActivityPolling();
   }
 
   private async setOpeningExtension(id: string, opening: boolean): Promise<void> {
@@ -253,7 +368,14 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
   private async render(webviewView: vscode.WebviewView): Promise<void> {
     const webview = webviewView.webview;
     const nonce = getNonce();
-    const items = this.getItems(webview);
+    const inventory = this.getInventory(webview);
+    this.lastRuntimeActivitySignature = this.getRuntimeActivitySignature();
+    webview.options = {
+      enableScripts: true,
+      localResourceRoots: inventory.localResourceRoots,
+    };
+
+    const items = inventory.items;
     const counts = this.getCounts(items);
     const filteredItems = this.showBuiltin ? items : items.filter((item) => !item.isBuiltin);
     const filteredGroups = this.getGroups(filteredItems);
@@ -282,61 +404,260 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
     );
   }
 
-  private getItems(webview: vscode.Webview): ExtensionItem[] {
-    return vscode.extensions.all
-      .map((ext) => {
-        const [publisher, ...rest] = ext.id.split('.');
-        const name = rest.join('.') || ext.id;
-        const packageJson = ext.packageJSON as {
-          version?: string;
-          description?: string;
-          icon?: string;
-          isBuiltin?: boolean;
-          categories?: string[];
-        };
+  private getInventory(webview: vscode.Webview): ExtensionInventory {
+    const runtimeById = new Map<string, vscode.Extension<unknown>>();
+    for (const ext of vscode.extensions.all) {
+      runtimeById.set(ext.id.toLowerCase(), ext);
+    }
 
-        let iconUri: vscode.Uri | undefined;
-        if (packageJson.icon && typeof packageJson.icon === 'string') {
-          try {
-            iconUri = webview.asWebviewUri(
-              vscode.Uri.joinPath(vscode.Uri.file(ext.extensionPath), packageJson.icon)
-            );
-          } catch {
-            iconUri = undefined;
-          }
+    const itemsById = new Map<string, ExtensionItem>();
+    const localResourceRoots: vscode.Uri[] = [this.context.extensionUri];
+    const seenRootIds = new Set<string>([this.context.extensionUri.toString()]);
+
+    for (const entry of this.readInstalledExtensionsMetadata()) {
+      const runtimeExtension = runtimeById.get(entry.id.toLowerCase());
+      const packageJson = (
+        entry.extensionPath
+          ? this.readExtensionManifest(entry.extensionPath)
+          : undefined
+      ) ?? (runtimeExtension?.packageJSON as ExtensionManifest | undefined);
+
+      const item = this.createItem(webview, {
+        id: entry.id,
+        extensionPath: entry.extensionPath ?? runtimeExtension?.extensionPath,
+        packageJson,
+        fallbackVersion: entry.version,
+        isBuiltin: entry.isBuiltin,
+        isActive: runtimeExtension?.isActive === true,
+        isDisabled: !entry.isBuiltin && !runtimeExtension,
+      });
+
+      if (!item) {
+        continue;
+      }
+
+      itemsById.set(item.id.toLowerCase(), item);
+      this.addLocalResourceRoot(localResourceRoots, seenRootIds, item.extensionPath);
+    }
+
+    for (const ext of vscode.extensions.all) {
+      if (itemsById.has(ext.id.toLowerCase())) {
+        this.addLocalResourceRoot(localResourceRoots, seenRootIds, ext.extensionPath);
+        continue;
+      }
+
+      const packageJson = ext.packageJSON as ExtensionManifest;
+      const item = this.createItem(webview, {
+        id: ext.id,
+        extensionPath: ext.extensionPath,
+        packageJson,
+        isBuiltin: packageJson.isBuiltin === true,
+        isActive: ext.isActive === true,
+        isDisabled: false,
+      });
+
+      if (!item) {
+        continue;
+      }
+
+      itemsById.set(item.id.toLowerCase(), item);
+      this.addLocalResourceRoot(localResourceRoots, seenRootIds, item.extensionPath);
+    }
+
+    return {
+      items: [...itemsById.values()].sort((a, b) => a.id.localeCompare(b.id)),
+      localResourceRoots,
+    };
+  }
+
+  private createItem(
+    webview: vscode.Webview,
+    options: {
+      id?: string;
+      extensionPath?: string;
+      packageJson?: ExtensionManifest;
+      fallbackVersion?: string;
+      isBuiltin: boolean;
+      isActive: boolean;
+      isDisabled: boolean;
+    }
+  ): ExtensionItem | undefined {
+    const resolvedId = options.id
+      ?? (
+        options.packageJson?.publisher && options.packageJson.name
+          ? `${options.packageJson.publisher}.${options.packageJson.name}`
+          : undefined
+      );
+
+    if (!resolvedId) {
+      return undefined;
+    }
+
+    const [publisher, ...rest] = resolvedId.split('.');
+    const name = rest.join('.') || options.packageJson?.name || resolvedId;
+
+    let iconUri: vscode.Uri | undefined;
+    if (
+      options.extensionPath
+      && typeof options.packageJson?.icon === 'string'
+      && options.packageJson.icon.length > 0
+    ) {
+      try {
+        iconUri = webview.asWebviewUri(
+          vscode.Uri.joinPath(vscode.Uri.file(options.extensionPath), options.packageJson.icon)
+        );
+      } catch {
+        iconUri = undefined;
+      }
+    }
+
+    return {
+      id: resolvedId,
+      publisher,
+      name,
+      displayName: options.packageJson?.displayName?.trim() || name,
+      categories: Array.isArray(options.packageJson?.categories) && options.packageJson.categories.length > 0
+        ? options.packageJson.categories
+        : ['Uncategorized'],
+      version: options.packageJson?.version ?? options.fallbackVersion ?? 'unknown',
+      description: options.packageJson?.description ?? '',
+      iconUri,
+      extensionPack: Array.isArray(options.packageJson?.extensionPack)
+        ? options.packageJson.extensionPack
+        : [],
+      extensionPath: options.extensionPath,
+      isBuiltin: options.isBuiltin || options.packageJson?.isBuiltin === true,
+      isActive: options.isActive,
+      isDisabled: options.isDisabled,
+    };
+  }
+
+  private addLocalResourceRoot(
+    roots: vscode.Uri[],
+    seenRootIds: Set<string>,
+    extensionPath?: string
+  ): void {
+    if (!extensionPath) {
+      return;
+    }
+
+    const uri = vscode.Uri.file(extensionPath);
+    const rootId = uri.toString();
+    if (seenRootIds.has(rootId)) {
+      return;
+    }
+
+    seenRootIds.add(rootId);
+    roots.push(uri);
+  }
+
+  private readExtensionManifest(extensionPath: string): ExtensionManifest | undefined {
+    try {
+      const packageJsonPath = path.join(extensionPath, 'package.json');
+      const raw = fs.readFileSync(packageJsonPath, 'utf8');
+      const parsed = JSON.parse(raw) as ExtensionManifest;
+      return parsed && typeof parsed === 'object' ? parsed : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private readInstalledExtensionsMetadata(): InstalledExtensionRecord[] {
+    const extensionsDir = this.getUserExtensionsDir();
+    if (!extensionsDir) {
+      return [];
+    }
+
+    try {
+      const extensionsJsonPath = path.join(extensionsDir, 'extensions.json');
+      const raw = fs.readFileSync(extensionsJsonPath, 'utf8');
+      const parsed = JSON.parse(raw) as ExtensionsJsonEntry[];
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+
+      return parsed.flatMap((entry) => {
+        if (!entry.identifier?.id) {
+          return [];
         }
 
-        return {
-          id: ext.id,
-          publisher,
-          name,
-          categories: Array.isArray(packageJson.categories) && packageJson.categories.length > 0
-            ? packageJson.categories
-            : ['Uncategorized'],
-          version: packageJson.version ?? 'unknown',
-          description: packageJson.description ?? '',
-          iconUri,
-          isBuiltin: packageJson.isBuiltin === true,
-          isActive: ext.isActive === true,
-        } satisfies ExtensionItem;
-      })
-      .sort((a, b) => a.id.localeCompare(b.id));
+        const extensionPath = (
+          typeof entry.location?.fsPath === 'string' && entry.location.fsPath.length > 0
+            ? entry.location.fsPath
+            : typeof entry.location?.path === 'string' && entry.location.path.length > 0
+              ? entry.location.path
+              : typeof entry.relativeLocation === 'string' && entry.relativeLocation.length > 0
+                ? path.join(extensionsDir, entry.relativeLocation)
+                : undefined
+        );
+
+        return [{
+          id: entry.identifier.id,
+          extensionPath,
+          version: entry.version,
+          isBuiltin: entry.metadata?.isBuiltin === true,
+          publisherDisplayName: entry.metadata?.publisherDisplayName,
+        }];
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  private getUserExtensionsDir(): string | undefined {
+    const runtimeExtension = vscode.extensions.all.find(
+      (ext) => !(ext.packageJSON as ExtensionManifest).isBuiltin
+    );
+    if (runtimeExtension) {
+      return path.dirname(runtimeExtension.extensionPath);
+    }
+
+    const envExtensionsDir = process.env.VSCODE_EXTENSIONS;
+    if (
+      envExtensionsDir
+      && fs.existsSync(path.join(envExtensionsDir, 'extensions.json'))
+    ) {
+      return envExtensionsDir;
+    }
+
+    const homeDir = os.homedir();
+    const candidates = [
+      path.join(homeDir, '.vscode', 'extensions'),
+      path.join(homeDir, '.vscode-insiders', 'extensions'),
+      path.join(homeDir, '.vscode-oss', 'extensions'),
+      path.join(homeDir, '.vscode-server', 'extensions'),
+      path.join(homeDir, '.vscode-server-insiders', 'extensions'),
+      path.join(homeDir, '.cursor', 'extensions'),
+      path.join(homeDir, '.cursor-server', 'extensions'),
+      path.join(homeDir, '.windsurf', 'extensions'),
+    ];
+
+    return candidates.find((candidate) => fs.existsSync(path.join(candidate, 'extensions.json')));
   }
 
   private getCounts(items: ExtensionItem[]): SummaryCounts {
     const installed = items.filter((item) => !item.isBuiltin);
     const builtin = items.filter((item) => item.isBuiltin);
+    const idle = items.filter((item) => !item.isActive && !item.isDisabled);
+    const installedIdle = installed.filter((item) => !item.isActive && !item.isDisabled);
+    const builtinIdle = builtin.filter((item) => !item.isActive && !item.isDisabled);
+    const disabled = items.filter((item) => item.isDisabled);
+    const installedDisabled = installed.filter((item) => item.isDisabled);
+    const builtinDisabled = builtin.filter((item) => item.isDisabled);
 
     return {
       total: items.length,
       active: items.filter((item) => item.isActive).length,
-      inactive: items.filter((item) => !item.isActive).length,
+      inactive: idle.length,
+      disabled: disabled.length,
       installed: installed.length,
       installedActive: installed.filter((item) => item.isActive).length,
-      installedInactive: installed.filter((item) => !item.isActive).length,
+      installedInactive: installedIdle.length,
+      installedDisabled: installedDisabled.length,
       builtin: builtin.length,
       builtinActive: builtin.filter((item) => item.isActive).length,
-      builtinInactive: builtin.filter((item) => !item.isActive).length,
+      builtinInactive: builtinIdle.length,
+      builtinDisabled: builtinDisabled.length,
     };
   }
 
@@ -357,23 +678,17 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
   }
 
   private getPackGroups(items: ExtensionItem[]): PackGroup[] {
-    const byId = new Map(items.map((item) => [item.id, item]));
+    const byId = new Map(items.map((item) => [item.id.toLowerCase(), item]));
     const assigned = new Set<string>();
     const groups: PackGroup[] = [];
 
-    const packExtensions = vscode.extensions.all
-      .map((ext) => {
-        const packageJson = ext.packageJSON as {
-          displayName?: string;
-          description?: string;
-          extensionPack?: string[];
-        };
-
+    const packExtensions = items
+      .map((item) => {
         return {
-          id: ext.id,
-          label: packageJson.displayName ?? ext.id,
-          description: packageJson.description ?? '',
-          extensionPack: Array.isArray(packageJson.extensionPack) ? packageJson.extensionPack : [],
+          id: item.id,
+          label: item.displayName || item.id,
+          description: item.description,
+          extensionPack: item.extensionPack,
         };
       })
       .filter((ext) => ext.extensionPack.length > 0)
@@ -383,10 +698,10 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       const packItems: ExtensionItem[] = [];
 
       for (const childId of pack.extensionPack) {
-        const found = byId.get(childId);
+        const found = byId.get(childId.toLowerCase());
         if (found) {
           packItems.push(found);
-          assigned.add(childId);
+          assigned.add(found.id.toLowerCase());
         }
       }
 
@@ -402,7 +717,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
     }
 
     const notInPack = items.filter(
-      (item) => !assigned.has(item.id) && !packExtensions.some((pack) => pack.id === item.id)
+      (item) => !assigned.has(item.id.toLowerCase()) && !packExtensions.some((pack) => pack.id === item.id)
     );
 
     const installed = notInPack.filter((item) => !item.isBuiltin);
@@ -434,33 +749,16 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
   private getPublisherDisplayNames(): Map<string, string> {
     const names = new Map<string, string>();
 
-    // Read from VS Code's extensions.json which has publisherDisplayName
-    try {
-      const fs = require('fs') as typeof import('fs');
-      const path = require('path') as typeof import('path');
-
-      // Extensions live alongside the VS Code CLI in ~/.vscode/extensions/
-      // Derive path from any installed extension's extensionPath
-      const anyInstalled = vscode.extensions.all.find(
-        (ext) => !(ext.packageJSON as { isBuiltin?: boolean }).isBuiltin
-      );
-      if (anyInstalled) {
-        const extensionsDir = path.dirname(anyInstalled.extensionPath);
-        const extensionsJsonPath = path.join(extensionsDir, 'extensions.json');
-        const data = JSON.parse(fs.readFileSync(extensionsJsonPath, 'utf8')) as Array<{
-          identifier?: { id?: string };
-          metadata?: { publisherDisplayName?: string };
-        }>;
-        for (const entry of data) {
-          if (!entry.identifier?.id || !entry.metadata?.publisherDisplayName) continue;
-          const [publisherId] = entry.identifier.id.split('.');
-          if (!names.has(publisherId)) {
-            names.set(publisherId, entry.metadata.publisherDisplayName);
-          }
-        }
+    for (const entry of this.readInstalledExtensionsMetadata()) {
+      if (!entry.publisherDisplayName) {
+        continue;
       }
-    } catch {
-      // Ignore — fall through to empty map, labels will use publisher ID
+
+      const [publisherId] = entry.id.split('.');
+      const publisherKey = publisherId?.toLowerCase();
+      if (publisherKey && !names.has(publisherKey)) {
+        names.set(publisherKey, entry.publisherDisplayName);
+      }
     }
 
     return names;
@@ -482,12 +780,12 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
 
     return [...groupsByPublisher.entries()]
       .sort(([a], [b]) => {
-        const aName = displayNames.get(a) ?? a;
-        const bName = displayNames.get(b) ?? b;
+        const aName = displayNames.get(a.toLowerCase()) ?? a;
+        const bName = displayNames.get(b.toLowerCase()) ?? b;
         return aName.localeCompare(bName);
       })
       .map(([publisher, publisherItems]) => {
-        const displayName = displayNames.get(publisher) ?? publisher;
+        const displayName = displayNames.get(publisher.toLowerCase()) ?? publisher;
         const installedCount = publisherItems.filter((item) => !item.isBuiltin).length;
         const builtinCount = publisherItems.length - installedCount;
         const descriptionParts: string[] = [];
@@ -563,22 +861,31 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
     groupMode: GroupMode = 'pack',
     showBuiltin = true
   ): string {
+    const formatStateSummary = (activeCount: number, idleCount: number, disabledCount: number): string => {
+      const parts = [`Active ${activeCount}`, `Idle ${idleCount}`];
+      if (disabledCount > 0) {
+        parts.push(`Disabled ${disabledCount}`);
+      }
+
+      return parts.join(' · ');
+    };
+
     const statsHtml = showBuiltin ? `
       <div class="stats-grid" style="grid-template-columns: repeat(3, minmax(0, 1fr));">
         <div class="stat-card">
           <div class="stat-label">Total</div>
           <div class="stat-value">${counts.total}</div>
-          <div class="stat-sub">Active ${counts.active} · Idle ${counts.inactive}</div>
+          <div class="stat-sub">${formatStateSummary(counts.active, counts.inactive, counts.disabled)}</div>
         </div>
         <div class="stat-card">
           <div class="stat-label">Installed</div>
           <div class="stat-value">${counts.installed}</div>
-          <div class="stat-sub">Active ${counts.installedActive} · Idle ${counts.installedInactive}</div>
+          <div class="stat-sub">${formatStateSummary(counts.installedActive, counts.installedInactive, counts.installedDisabled)}</div>
         </div>
         <div class="stat-card">
           <div class="stat-label">Built-in</div>
           <div class="stat-value">${counts.builtin}</div>
-          <div class="stat-sub">Active ${counts.builtinActive} · Idle ${counts.builtinInactive}</div>
+          <div class="stat-sub">${formatStateSummary(counts.builtinActive, counts.builtinInactive, counts.builtinDisabled)}</div>
         </div>
       </div>
     ` : `
@@ -586,14 +893,15 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
         <div class="stat-card">
           <div class="stat-label">Installed</div>
           <div class="stat-value">${counts.installed}</div>
-          <div class="stat-sub">Active ${counts.installedActive} · Idle ${counts.installedInactive}</div>
+          <div class="stat-sub">${formatStateSummary(counts.installedActive, counts.installedInactive, counts.installedDisabled)}</div>
         </div>
       </div>
     `;
 
     const sections = groups.map((group) => {
       const activeCount = group.items.filter((item) => item.isActive).length;
-      const inactiveCount = group.items.length - activeCount;
+      const disabledCount = group.items.filter((item) => item.isDisabled).length;
+      const inactiveCount = group.items.filter((item) => !item.isActive && !item.isDisabled).length;
 
       const cards = group.items.map((item) => {
         const icon = item.iconUri
@@ -602,8 +910,8 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
 
         const marketplaceUrl =
           `https://marketplace.visualstudio.com/items?itemName=${encodeURIComponent(item.id)}`;
-        const statusClass = item.isActive ? 'active' : 'inactive';
-        const statusText = item.isActive ? 'Active' : 'Idle';
+        const statusClass = item.isDisabled ? 'disabled' : item.isActive ? 'active' : 'inactive';
+        const statusText = item.isDisabled ? 'Disabled' : item.isActive ? 'Active' : 'Idle';
         const kindText = item.isBuiltin ? 'Built-in' : '';
 
         return `
@@ -662,7 +970,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
                   <span class="group-count">${group.items.length}</span>
                 </div>
                 <div class="group-desc">${escapeHtml(group.description || '')}</div>
-                <div class="group-meta">Active ${activeCount} · Idle ${inactiveCount}</div>
+                <div class="group-meta">${escapeHtml(formatStateSummary(activeCount, inactiveCount, disabledCount))}</div>
               </div>
             </summary>
             <div class="group-body">
@@ -934,6 +1242,12 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider {
       background: color-mix(in srgb, var(--vscode-descriptionForeground) 16%, transparent);
       color: var(--vscode-descriptionForeground);
       border-color: color-mix(in srgb, var(--vscode-descriptionForeground) 35%, transparent);
+    }
+
+    .status-badge.disabled {
+      background: color-mix(in srgb, var(--vscode-errorForeground, #c72e0f) 16%, transparent);
+      color: var(--vscode-errorForeground, #c72e0f);
+      border-color: color-mix(in srgb, var(--vscode-errorForeground, #c72e0f) 40%, transparent);
     }
 
     .publisher,

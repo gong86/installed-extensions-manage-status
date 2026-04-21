@@ -41,6 +41,8 @@ Package a VSIX for manual install / marketplace publishing:
 npm run package
 ```
 
+`npm run package` uses `vsce package --no-dependencies`, which is the correct packaging mode for this extension because it has no runtime npm dependencies.
+
 Note: `.vscodeignore` excludes development helper files (see `scripts/**`).
 
 ## Linting / Type checking
@@ -53,7 +55,7 @@ npm run lint
 
 ## Notes & conventions
 
-- The extension shows an Activity Bar webview with grouping modes and per-extension cards. It does not perform installs/uninstalls or enable/disable actions.
+- The extension shows an Activity Bar webview with grouping modes, per-extension cards, disabled-extension detection, and auto-refreshing status badges. It does not perform installs/uninstalls or enable/disable actions.
 - Keep changes small and run `npm run compile` before committing to ensure type-safety.
 - Use feature branches and descriptive commit messages.
 
