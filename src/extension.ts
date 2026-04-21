@@ -66,6 +66,7 @@ type PackGroup = {
   description: string;
   items: ExtensionItem[];
   isPack: boolean;
+  iconUri?: vscode.Uri;
 };
 
 type SummaryCounts = {
@@ -680,7 +681,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
   private getPackGroups(items: ExtensionItem[]): PackGroup[] {
     const byId = new Map(items.map((item) => [item.id.toLowerCase(), item]));
     const assigned = new Set<string>();
-    const groups: PackGroup[] = [];
+    const packGroups: PackGroup[] = [];
 
     const packExtensions = items
       .map((item) => {
@@ -688,6 +689,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
           id: item.id,
           label: item.displayName || item.id,
           description: item.description,
+          iconUri: item.iconUri,
           extensionPack: item.extensionPack,
         };
       })
@@ -706,12 +708,13 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
       }
 
       if (packItems.length > 0) {
-        groups.push({
+        packGroups.push({
           id: pack.id,
           label: pack.label,
           description: pack.description,
           items: packItems.sort((a, b) => a.id.localeCompare(b.id)),
           isPack: true,
+          iconUri: pack.iconUri,
         });
       }
     }
@@ -724,26 +727,84 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
     const builtin = notInPack.filter((item) => item.isBuiltin);
 
     if (installed.length > 0) {
-      groups.push({
+      packGroups.unshift({
         id: 'other-installed',
-        label: 'Other Installed',
-        description: 'Installed extensions not listed in an installed extension pack',
+        label: 'Standalone Extensions',
+        description: 'Installed extensions not included in any installed extension pack',
         items: installed.sort((a, b) => a.id.localeCompare(b.id)),
         isPack: false,
       });
     }
 
     if (builtin.length > 0) {
-      groups.push({
+      packGroups.push({
         id: 'builtin',
-        label: 'Built-in',
-        description: 'Built-in extensions not listed in an installed extension pack',
+        label: 'Built-in Extensions',
+        description: 'Built-in extensions not included in any installed extension pack',
         items: builtin.sort((a, b) => a.id.localeCompare(b.id)),
         isPack: false,
       });
     }
 
-    return groups;
+    return packGroups;
+  }
+
+  private getGroupIconMarkup(group: PackGroup): string {
+    if (group.iconUri) {
+      return `<img class="group-icon" src="${group.iconUri.toString()}" alt="" />`;
+    }
+
+    if (group.id === 'other-installed') {
+      return `
+        <span class="group-icon group-icon-symbolic" aria-hidden="true">
+          <svg class="group-icon-svg" viewBox="0 0 16 16" fill="none">
+            <rect x="2" y="2" width="4" height="4" rx="1"></rect>
+            <rect x="10" y="2" width="4" height="4" rx="1"></rect>
+            <rect x="2" y="10" width="4" height="4" rx="1"></rect>
+            <rect x="10" y="10" width="4" height="4" rx="1"></rect>
+          </svg>
+        </span>
+      `;
+    }
+
+    if (group.id === 'builtin') {
+      return `
+        <span class="group-icon group-icon-symbolic" aria-hidden="true">
+          <svg class="group-icon-svg" viewBox="0 0 16 16" fill="none">
+            <path d="M8 2.2 3.2 4.3v3.6c0 3 2.1 5.7 4.8 6.5 2.7-.8 4.8-3.5 4.8-6.5V4.3L8 2.2Z"></path>
+            <path d="m6.6 8 1 1 2-2.2"></path>
+          </svg>
+        </span>
+      `;
+    }
+
+    if (group.id.startsWith('publisher:')) {
+      return `
+        <span class="group-icon group-icon-symbolic" aria-hidden="true">
+          <svg class="group-icon-svg" viewBox="0 0 16 16" fill="none">
+            <path d="M3 13.2h10"></path>
+            <path d="M4.3 13V6.3"></path>
+            <path d="M8 13V6.3"></path>
+            <path d="M11.7 13V6.3"></path>
+            <path d="M2.5 6.2h11"></path>
+            <path d="M8 2.5 2.8 5.2h10.4L8 2.5Z"></path>
+          </svg>
+        </span>
+      `;
+    }
+
+    if (group.id.startsWith('category:')) {
+      return `
+        <span class="group-icon group-icon-symbolic" aria-hidden="true">
+          <svg class="group-icon-svg" viewBox="0 0 16 16" fill="none">
+            <path d="M7 3.2H3.8c-.7 0-1.3.6-1.3 1.3v3.2c0 .4.2.8.5 1.1l3.7 3.7c.5.5 1.3.5 1.8 0l4-4c.5-.5.5-1.3 0-1.8L8.1 3.6C7.8 3.3 7.4 3.2 7 3.2Z"></path>
+            <path d="M5.2 5.4h.1"></path>
+          </svg>
+        </span>
+      `;
+    }
+
+    return '';
   }
 
   private getPublisherDisplayNames(): Map<string, string> {
@@ -764,6 +825,26 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
     return names;
   }
 
+  private isSyntheticPublisher(publisher: string): boolean {
+    const normalized = publisher.trim().toLowerCase();
+    return normalized === ''
+      || normalized === 'unknown'
+      || normalized === 'undefined'
+      || normalized === 'undefined_publisher'
+      || normalized === 'undefined publisher';
+  }
+
+  private getPublisherDisplayLabel(
+    publisher: string,
+    displayNames: Map<string, string>
+  ): string {
+    if (this.isSyntheticPublisher(publisher)) {
+      return 'Unknown Publisher';
+    }
+
+    return displayNames.get(publisher.toLowerCase()) ?? publisher;
+  }
+
   private getPublisherGroups(items: ExtensionItem[]): PackGroup[] {
     const groupsByPublisher = new Map<string, ExtensionItem[]>();
     const displayNames = this.getPublisherDisplayNames();
@@ -780,15 +861,26 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
 
     return [...groupsByPublisher.entries()]
       .sort(([a], [b]) => {
-        const aName = displayNames.get(a.toLowerCase()) ?? a;
-        const bName = displayNames.get(b.toLowerCase()) ?? b;
+        const aIsSynthetic = this.isSyntheticPublisher(a);
+        const bIsSynthetic = this.isSyntheticPublisher(b);
+        if (aIsSynthetic !== bIsSynthetic) {
+          return aIsSynthetic ? -1 : 1;
+        }
+
+        const aName = this.getPublisherDisplayLabel(a, displayNames);
+        const bName = this.getPublisherDisplayLabel(b, displayNames);
         return aName.localeCompare(bName);
       })
       .map(([publisher, publisherItems]) => {
-        const displayName = displayNames.get(publisher.toLowerCase()) ?? publisher;
+        const displayName = this.getPublisherDisplayLabel(publisher, displayNames);
         const installedCount = publisherItems.filter((item) => !item.isBuiltin).length;
         const builtinCount = publisherItems.length - installedCount;
         const descriptionParts: string[] = [];
+        const isSyntheticPublisher = this.isSyntheticPublisher(publisher);
+
+        if (isSyntheticPublisher) {
+          descriptionParts.push('No publisher metadata');
+        }
 
         if (installedCount > 0) {
           descriptionParts.push(`${installedCount} installed`);
@@ -806,6 +898,14 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
           isPack: false,
         };
       });
+  }
+
+  private getCategoryDisplayLabel(category: string): string {
+    return this.isSyntheticCategory(category) ? 'Uncategorized Extensions' : category;
+  }
+
+  private isSyntheticCategory(category: string): boolean {
+    return category === 'Uncategorized';
   }
 
   private getCategoryGroups(items: ExtensionItem[], duplicateAcrossCategories = false): PackGroup[] {
@@ -827,11 +927,24 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
     }
 
     return [...groupsByCategory.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
+      .sort(([a], [b]) => {
+        const aIsSynthetic = this.isSyntheticCategory(a);
+        const bIsSynthetic = this.isSyntheticCategory(b);
+        if (aIsSynthetic !== bIsSynthetic) {
+          return aIsSynthetic ? -1 : 1;
+        }
+
+        return this.getCategoryDisplayLabel(a).localeCompare(this.getCategoryDisplayLabel(b));
+      })
       .map(([category, categoryItems]) => {
         const installedCount = categoryItems.filter((item) => !item.isBuiltin).length;
         const builtinCount = categoryItems.length - installedCount;
         const descriptionParts: string[] = [];
+        const isSyntheticCategory = this.isSyntheticCategory(category);
+
+        if (isSyntheticCategory) {
+          descriptionParts.push('No declared category');
+        }
 
         if (installedCount > 0) {
           descriptionParts.push(`${installedCount} installed`);
@@ -843,7 +956,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
 
         return {
           id: `category:${category}`,
-          label: category,
+          label: this.getCategoryDisplayLabel(category),
           description: descriptionParts.join(' · '),
           items: categoryItems.sort((a, b) => a.id.localeCompare(b.id)),
           isPack: false,
@@ -948,15 +1061,20 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
       }).join('\n');
 
       const openAttr = expandedGroupIds.has(group.id) ? 'open' : '';
+      const groupIcon = this.getGroupIconMarkup(group);
       let groupOpenButton = '';
       if (group.isPack) {
-        groupOpenButton = `<button class="group-open-btn" data-action="openExtension" data-value="${escapeHtml(group.id)}">Open</button>`;
+        groupOpenButton = `<button class="group-open-btn" data-action="openExtension" data-value="${escapeHtml(group.id)}">Show</button>`;
       } else if (group.id.startsWith('publisher:')) {
         const publisher = group.id.slice('publisher:'.length);
-        groupOpenButton = `<button class="group-open-btn" data-action="searchPublisher" data-value="${escapeHtml(publisher)}">Search</button>`;
+        if (!this.isSyntheticPublisher(publisher)) {
+          groupOpenButton = `<button class="group-open-btn" data-action="searchPublisher" data-value="${escapeHtml(publisher)}">Search</button>`;
+        }
       } else if (group.id.startsWith('category:')) {
         const category = group.id.slice('category:'.length);
-        groupOpenButton = `<button class="group-open-btn" data-action="searchCategory" data-value="${escapeHtml(category)}">Search</button>`;
+        if (!this.isSyntheticCategory(category)) {
+          groupOpenButton = `<button class="group-open-btn" data-action="searchCategory" data-value="${escapeHtml(category)}">Search</button>`;
+        }
       }
 
       return `
@@ -964,13 +1082,16 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
           ${groupOpenButton ? `<div class="group-open-wrap">${groupOpenButton}</div>` : ''}
           <details class="group" data-group-id="${escapeHtml(group.id)}" ${openAttr}>
             <summary>
-              <div class="group-title-row">
-                <div class="group-title-wrap">
-                  <span class="group-title">${escapeHtml(group.label)}</span>
-                  <span class="group-count">${group.items.length}</span>
+              <div class="group-summary-main">
+                ${groupIcon}
+                <div class="group-title-row">
+                  <div class="group-title-wrap">
+                    <span class="group-title">${escapeHtml(group.label)}</span>
+                    <span class="group-count">${group.items.length}</span>
+                  </div>
+                  <div class="group-desc">${escapeHtml(group.description || '')}</div>
+                  <div class="group-meta">${escapeHtml(formatStateSummary(activeCount, inactiveCount, disabledCount))}</div>
                 </div>
-                <div class="group-desc">${escapeHtml(group.description || '')}</div>
-                <div class="group-meta">${escapeHtml(formatStateSummary(activeCount, inactiveCount, disabledCount))}</div>
               </div>
             </summary>
             <div class="group-body">
@@ -1107,7 +1228,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
     summary {
       list-style: none;
       cursor: pointer;
-      padding: 10px 12px;
+      padding: 10px 64px 10px 12px;
       background: color-mix(in srgb, var(--vscode-sideBar-background) 80%, transparent);
     }
 
@@ -1115,8 +1236,50 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
       display: none;
     }
 
+    .group-summary-main {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+
+    .group-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      object-fit: contain;
+      background: var(--vscode-editor-background);
+      border: 1px solid var(--vscode-panel-border);
+      flex: 0 0 auto;
+    }
+
+    .group-icon-fallback {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+    }
+
+    .group-icon-symbolic {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--vscode-textLink-foreground);
+      background: color-mix(in srgb, var(--vscode-textLink-foreground) 12%, var(--vscode-editor-background));
+    }
+
+    .group-icon-svg {
+      width: 16px;
+      height: 16px;
+      stroke: currentColor;
+      stroke-width: 1.3;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
     .group-title-row {
       display: flex;
+      flex: 1;
+      min-width: 0;
       flex-direction: column;
       gap: 4px;
     }
@@ -1327,16 +1490,70 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
 
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
-    let selectedCardId = ${JSON.stringify(selectedExtensionId ?? '')};
+    const serverExpandedGroupIds = ${JSON.stringify([...expandedGroupIds])};
+    const serverGroupMode = ${JSON.stringify(groupMode)};
+    const serverShowBuiltin = ${JSON.stringify(showBuiltin)};
+    const initialViewState = vscode.getState();
+    const persistedExpandedGroupIds = initialViewState
+      && initialViewState.groupMode === serverGroupMode
+      && initialViewState.showBuiltin === serverShowBuiltin
+      && Array.isArray(initialViewState.expandedGroupIds)
+        ? initialViewState.expandedGroupIds.filter((value) => typeof value === 'string')
+        : serverExpandedGroupIds;
+    let selectedCardId = typeof initialViewState?.selectedCardId === 'string'
+      ? initialViewState.selectedCardId
+      : ${JSON.stringify(selectedExtensionId ?? '')};
     const openingCardIds = new Set();
     const openingCardTimers = new Map();
     const openingIndicatorDelayMs = 160;
     let suppressCardClick = false;
 
-    function sendExpandedGroups() {
-      const expandedIds = Array.from(
+    function getExpandedGroupIds() {
+      return Array.from(
         document.querySelectorAll('details.group[open][data-group-id]')
       ).map((el) => el.getAttribute('data-group-id')).filter(Boolean);
+    }
+
+    function persistViewState(expandedGroupIds = getExpandedGroupIds(), overrides = {}) {
+      vscode.setState({
+        selectedCardId,
+        expandedGroupIds,
+        groupMode: serverGroupMode,
+        showBuiltin: serverShowBuiltin,
+        ...overrides
+      });
+    }
+
+    function restoreExpandedGroups() {
+      const desiredIds = new Set(persistedExpandedGroupIds);
+      document.querySelectorAll('details.group[data-group-id]').forEach((details) => {
+        if (!(details instanceof HTMLDetailsElement)) {
+          return;
+        }
+
+        const groupId = details.getAttribute('data-group-id');
+        details.open = !!groupId && desiredIds.has(groupId);
+      });
+    }
+
+    function applySelectedCard() {
+      document.querySelectorAll('.card.selected').forEach((el) => {
+        el.classList.remove('selected');
+      });
+
+      if (!selectedCardId) {
+        return;
+      }
+
+      const next = document.querySelector('.card[data-id="' + selectedCardId + '"]');
+      if (next) {
+        next.classList.add('selected');
+      }
+    }
+
+    function sendExpandedGroups() {
+      const expandedIds = getExpandedGroupIds();
+      persistViewState(expandedIds);
 
       vscode.postMessage({
         type: 'setExpandedGroups',
@@ -1350,15 +1567,8 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
       }
 
       selectedCardId = id;
-
-      document.querySelectorAll('.card.selected').forEach((el) => {
-        el.classList.remove('selected');
-      });
-
-      const next = document.querySelector('.card[data-id="' + id + '"]');
-      if (next) {
-        next.classList.add('selected');
-      }
+      applySelectedCard();
+      persistViewState();
 
       vscode.postMessage({
         type: 'setSelectedExtension',
@@ -1415,6 +1625,11 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
       });
     }
 
+    restoreExpandedGroups();
+    applySelectedCard();
+    persistViewState();
+    sendExpandedGroups();
+
     document.querySelectorAll('details.group').forEach((details) => {
       details.addEventListener('toggle', sendExpandedGroups);
     });
@@ -1422,6 +1637,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
     const groupModeSelect = document.getElementById('group-mode-select');
     if (groupModeSelect instanceof HTMLSelectElement) {
       groupModeSelect.addEventListener('change', () => {
+        persistViewState([], { groupMode: groupModeSelect.value });
         vscode.postMessage({
           type: 'setGroupMode',
           value: groupModeSelect.value
@@ -1432,6 +1648,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
     const showBuiltinCheckbox = document.getElementById('show-builtin-checkbox');
     if (showBuiltinCheckbox instanceof HTMLInputElement) {
       showBuiltinCheckbox.addEventListener('change', () => {
+        persistViewState([], { showBuiltin: showBuiltinCheckbox.checked });
         vscode.postMessage({
           type: 'setShowBuiltin',
           value: showBuiltinCheckbox.checked ? 'true' : 'false'
@@ -1454,10 +1671,10 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
         if (groupBtn instanceof HTMLElement) {
           if (message.opening) {
             groupBtn.classList.add('opening');
-            groupBtn.textContent = 'Opening\u2026';
+            groupBtn.textContent = 'Showing\u2026';
           } else {
             groupBtn.classList.remove('opening');
-            groupBtn.textContent = 'Open';
+            groupBtn.textContent = 'Show';
           }
         }
       }
@@ -1467,7 +1684,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
         if (groupBtn instanceof HTMLElement) {
           groupBtn.classList.remove('opening');
           const action = groupBtn.dataset.action;
-          groupBtn.textContent = action === 'openExtension' ? 'Open' : 'Search';
+          groupBtn.textContent = action === 'openExtension' ? 'Show' : 'Search';
         }
       }
     });
@@ -1483,7 +1700,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
         const value = target.dataset.value;
         if (action && value) {
           target.classList.add('opening');
-          target.textContent = action === 'openExtension' ? 'Opening\u2026' : 'Searching\u2026';
+          target.textContent = action === 'openExtension' ? 'Showing\u2026' : 'Searching\u2026';
           vscode.postMessage({ type: action, value: value });
         }
         return;
