@@ -1,29 +1,48 @@
 # Installed Extensions Manage Status
 
-Browse your installed VS Code extensions from a compact Activity Bar webview. The extension presents extension cards, summary statistics, and several grouping modes so you can inspect installed and built-in extensions quickly.
+See your VS Code extensions in one compact sidebar view.
 
-## What it does
+This extension helps you browse what is installed, see what is active, idle, or disabled, and organize everything by pack, publisher, or category without bouncing around the default Extensions view.
 
-- Adds an Activity Bar container `Ext Manage` with the `Installed Extensions` webview view.
-- Displays per-extension cards with icon, name, publisher, description, version, and badges for Active / Idle / Disabled and Built-in.
-- Includes disabled installed extensions in the list even when they are not present in `vscode.extensions.all`.
-- Shows summary cards: Total, Installed, Built-in with Active / Idle / Disabled breakdowns.
-- Grouping modes: **Pack** (with built-ins pinned first), **Publisher** (with built-ins merged into normal publisher groups when possible, and built-in-only publishers pinned first using the same title format as other publishers), **Category**, **Category (All)**.
-- Per-card actions: **Copy ID**, **Copy Install Cmd** (copies `code --install-extension <id>`), **Marketplace** (opens the extension's Marketplace page), and clicking a card opens the extension details in VS Code.
-- Auto-refreshes when extensions are installed, uninstalled, enabled, or disabled, and refreshes visible activity status while the view is open.
-- Retains webview context when hidden and remembers expanded groups during the session.
+## Why It Helps
 
-## What it doesn't do
+- See installed extensions at a glance from the `Ext Manage` Activity Bar view.
+- Check summary counts for active, idle, disabled, and built-in extensions.
+- Group extensions in different ways depending on how you think about your setup.
+- Spot extension packs and preview or release builds from the corner badges on each card.
+- Open extension details fast, copy an extension ID, copy an install command, or jump to the Marketplace page.
+- Keep disabled installed extensions visible in the list, even when VS Code does not surface them in `vscode.extensions.all`.
 
-- It does not install/uninstall/enable/disable extensions directly from the webview.
+## How To Use
 
-## Commands
+1. Open the `Ext Manage` icon in the Activity Bar.
+2. Browse the `Installed Extensions` view.
+3. Pick a grouping mode:
+   - `Pack`
+   - `Publisher`
+   - `Category`
+   - `Category (All)`
+4. Turn on `Show Built-in` if you also want to include built-in VS Code extensions.
+5. Click any extension card to open its details in VS Code.
 
-- `Refresh Installed Extensions` — refresh the view programmatically (contributed command `installedExtensionsManageStatus.refresh`).
+## What You Can Do
+
+- View summary cards for total installed and built-in extensions.
+- See each extension's icon, name, publisher, version, description, status badges, and corner labels for packs and preview or release builds.
+- Group by extension pack, publisher, or category.
+- Copy `code --install-extension <id>` from an extension card.
+- Open the Marketplace page for an extension.
+- Keep your current view state while the sidebar view stays open.
+- Let the view refresh automatically when extensions are installed, removed, enabled, or disabled, and keep active or idle status up to date while the view is visible.
+
+## Notes
+
+- Built-in extensions are optional in the main list and can be shown with the `Show Built-in` checkbox.
+- This sidebar view is for browsing and quick actions. It does not install, uninstall, enable, or disable extensions directly.
 
 ## Contributing
 
-Contributions welcome — open issues or pull requests at https://github.com/gong86/installed-extensions-manage-status
+Issues and pull requests are welcome: https://github.com/gong86/installed-extensions-manage-status
 
 ## License
 

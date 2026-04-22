@@ -15,6 +15,9 @@ type ExtensionItem = {
   extensionPack: string[];
   extensionPath?: string;
   isBuiltin: boolean;
+  isPreview: boolean;
+  hasPreReleaseVersion: boolean;
+  isPreReleaseVersion: boolean;
   isActive: boolean;
   isDisabled: boolean;
 };
@@ -27,6 +30,7 @@ type ExtensionManifest = {
   description?: string;
   icon?: string;
   isBuiltin?: boolean;
+  preview?: boolean;
   categories?: string[];
   extensionPack?: string[];
 };
@@ -44,6 +48,9 @@ type ExtensionsJsonEntry = {
   metadata?: {
     isBuiltin?: boolean;
     publisherDisplayName?: string;
+    hasPreReleaseVersion?: boolean;
+    isPreReleaseVersion?: boolean;
+    preRelease?: boolean;
   };
 };
 
@@ -53,6 +60,8 @@ type InstalledExtensionRecord = {
   version?: string;
   isBuiltin: boolean;
   publisherDisplayName?: string;
+  hasPreReleaseVersion?: boolean;
+  isPreReleaseVersion?: boolean;
 };
 
 type ExtensionInventory = {
@@ -429,6 +438,8 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
         packageJson,
         fallbackVersion: entry.version,
         isBuiltin: entry.isBuiltin,
+        hasPreReleaseVersion: entry.hasPreReleaseVersion,
+        isPreReleaseVersion: entry.isPreReleaseVersion,
         isActive: runtimeExtension?.isActive === true,
         isDisabled: !entry.isBuiltin && !runtimeExtension,
       });
@@ -453,6 +464,8 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
         extensionPath: ext.extensionPath,
         packageJson,
         isBuiltin: packageJson.isBuiltin === true,
+        hasPreReleaseVersion: false,
+        isPreReleaseVersion: false,
         isActive: ext.isActive === true,
         isDisabled: false,
       });
@@ -479,6 +492,8 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
       packageJson?: ExtensionManifest;
       fallbackVersion?: string;
       isBuiltin: boolean;
+      hasPreReleaseVersion?: boolean;
+      isPreReleaseVersion?: boolean;
       isActive: boolean;
       isDisabled: boolean;
     }
@@ -528,6 +543,9 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
         : [],
       extensionPath: options.extensionPath,
       isBuiltin: options.isBuiltin || options.packageJson?.isBuiltin === true,
+      isPreview: options.packageJson?.preview === true,
+      hasPreReleaseVersion: options.hasPreReleaseVersion === true || options.isPreReleaseVersion === true,
+      isPreReleaseVersion: options.isPreReleaseVersion === true,
       isActive: options.isActive,
       isDisabled: options.isDisabled,
     };
@@ -598,6 +616,8 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
           version: entry.version,
           isBuiltin: entry.metadata?.isBuiltin === true,
           publisherDisplayName: entry.metadata?.publisherDisplayName,
+          hasPreReleaseVersion: entry.metadata?.hasPreReleaseVersion === true,
+          isPreReleaseVersion: entry.metadata?.isPreReleaseVersion === true || entry.metadata?.preRelease === true,
         }];
       });
     } catch {
@@ -1057,9 +1077,35 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
       const inactiveCount = group.items.filter((item) => !item.isActive && !item.isDisabled).length;
 
       const cards = group.items.map((item) => {
-        const icon = item.iconUri
+        const cornerBadges: Array<{ label: string; kind: string }> = [];
+        if (item.extensionPack.length > 0) {
+          cornerBadges.push({ label: 'Pack', kind: 'pack' });
+        }
+
+        if (item.isPreview || item.isPreReleaseVersion) {
+          cornerBadges.push({ label: 'Preview', kind: 'preview' });
+        } else if (item.hasPreReleaseVersion && !item.isBuiltin) {
+          cornerBadges.push({ label: 'Release', kind: 'release' });
+        }
+
+        const iconBody = item.iconUri
           ? `<img class="icon" src="${item.iconUri.toString()}" alt="" />`
           : `<div class="icon fallback">🧩</div>`;
+        const iconBadges = cornerBadges.length > 0
+          ? `
+            <span class="icon-corner-badges">
+              ${cornerBadges.map((badge) =>
+                `<span class="icon-corner-badge ${badge.kind}">${escapeHtml(badge.label)}</span>`
+              ).join('')}
+            </span>
+          `
+          : '';
+        const icon = `
+          <div class="icon-wrap">
+            ${iconBody}
+            ${iconBadges}
+          </div>
+        `;
 
         const marketplaceUrl =
           `https://marketplace.visualstudio.com/items?itemName=${encodeURIComponent(item.id)}`;
@@ -1102,6 +1148,14 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
 
       const openAttr = expandedGroupIds.has(group.id) ? 'open' : '';
       const groupIcon = this.getGroupIconMarkup(group);
+      const groupCount = group.items.length;
+      const useIconCountBadge = group.isPack && !!groupIcon;
+      const groupIconMarkup = useIconCountBadge ? `
+        <span class="group-icon-wrap">
+          ${groupIcon}
+          <span class="group-icon-count">${groupCount}</span>
+        </span>
+      ` : groupIcon;
       let groupOpenButton = '';
       if (group.isPack) {
         groupOpenButton = `<button class="group-open-btn" data-action="openExtension" data-value="${escapeHtml(group.id)}">Show</button>`;
@@ -1150,11 +1204,11 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
           <details class="group" data-group-id="${escapeHtml(group.id)}" ${openAttr}>
             <summary>
               <div class="group-summary-main">
-                ${groupIcon}
+                ${groupIconMarkup}
                 <div class="group-title-row">
                   <div class="group-title-wrap">
                     ${groupTitle}
-                    <span class="group-count">${group.items.length}</span>
+                    ${useIconCountBadge ? '' : `<span class="group-count">${groupCount}</span>`}
                   </div>
                   <div class="group-desc">${escapeHtml(group.description || '')}</div>
                   <div class="group-meta">${escapeHtml(formatStateSummary(activeCount, inactiveCount, disabledCount))}</div>
@@ -1319,6 +1373,33 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
       flex: 0 0 auto;
     }
 
+    .group-icon-wrap {
+      position: relative;
+      display: inline-flex;
+      flex: 0 0 auto;
+    }
+
+    .group-icon-count {
+      position: absolute;
+      left: -5px;
+      bottom: -5px;
+      min-width: 14px;
+      height: 14px;
+      padding: 0 3px;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--vscode-badge-background);
+      color: var(--vscode-badge-foreground);
+      border: 1px solid var(--vscode-sideBar-background);
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 1;
+      box-sizing: border-box;
+      pointer-events: none;
+    }
+
     .group-icon-fallback {
       display: flex;
       align-items: center;
@@ -1431,6 +1512,59 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
       object-fit: contain;
       background: var(--vscode-editor-background);
       border: 1px solid var(--vscode-panel-border);
+    }
+
+    .icon-wrap {
+      position: relative;
+      width: 36px;
+      height: 36px;
+      flex: 0 0 36px;
+    }
+
+    .icon-corner-badges {
+      position: absolute;
+      top: -6px;
+      left: -6px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 3px;
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    .icon-corner-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 14px;
+      padding: 0 5px;
+      border-radius: 4px;
+      border: 1px solid var(--vscode-sideBar-background);
+      background: var(--vscode-badge-background);
+      color: var(--vscode-badge-foreground);
+      font-size: 8px;
+      font-weight: 700;
+      line-height: 1;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+      white-space: nowrap;
+      box-sizing: border-box;
+    }
+
+    .icon-corner-badge.pack {
+      background: var(--vscode-textLink-foreground);
+      color: var(--vscode-editor-background);
+    }
+
+    .icon-corner-badge.preview {
+      background: var(--vscode-editorWarning-foreground, #a15c00);
+      color: var(--vscode-editor-background);
+    }
+
+    .icon-corner-badge.release {
+      background: color-mix(in srgb, var(--vscode-descriptionForeground) 28%, var(--vscode-sideBar-background));
+      color: var(--vscode-foreground);
     }
 
     .fallback {
@@ -1559,7 +1693,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
     </label>
     <label class="group-mode-control">
       <input type="checkbox" id="show-builtin-checkbox"${showBuiltin ? ' checked' : ''} />
-      <span>Built-in</span>
+      <span>Show Built-in</span>
     </label>
   </div>
 
