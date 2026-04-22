@@ -97,6 +97,7 @@ type GroupMode = 'pack' | 'publisher' | 'category' | 'category-all';
 
 export function activate(context: vscode.ExtensionContext): void {
   const provider = new InstalledExtensionsWebviewProvider(context);
+  provider.syncMenuContext();
 
   context.subscriptions.push(provider);
 
@@ -125,7 +126,19 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('installedExtensionsManageStatus.groupByPackChecked', () => {
+      provider.setGroupMode('pack');
+    })
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand('installedExtensionsManageStatus.groupByPublisher', () => {
+      provider.setGroupMode('publisher');
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('installedExtensionsManageStatus.groupByPublisherChecked', () => {
       provider.setGroupMode('publisher');
     })
   );
@@ -137,7 +150,19 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('installedExtensionsManageStatus.groupByCategoryChecked', () => {
+      provider.setGroupMode('category');
+    })
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand('installedExtensionsManageStatus.groupByCategoryAll', () => {
+      provider.setGroupMode('category-all');
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('installedExtensionsManageStatus.groupByCategoryAllChecked', () => {
       provider.setGroupMode('category-all');
     })
   );
@@ -145,6 +170,36 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand('installedExtensionsManageStatus.toggleBuiltin', () => {
       provider.toggleBuiltin();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('installedExtensionsManageStatus.toggleBuiltinUnchecked', () => {
+      provider.toggleBuiltin();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('installedExtensionsManageStatus.toggleBuiltinChecked', () => {
+      provider.toggleBuiltin();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('installedExtensionsManageStatus.toggleSearch', () => {
+      provider.toggleSearch();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('installedExtensionsManageStatus.toggleSearchUnchecked', () => {
+      provider.toggleSearch();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('installedExtensionsManageStatus.toggleSearchChecked', () => {
+      provider.toggleSearch();
     })
   );
 
@@ -158,17 +213,32 @@ export function activate(context: vscode.ExtensionContext): void {
 export function deactivate(): void {}
 
 class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
+  private static readonly groupModeContextKeys = {
+    pack: 'installedExtensionsManageStatus.groupModePack',
+    publisher: 'installedExtensionsManageStatus.groupModePublisher',
+    category: 'installedExtensionsManageStatus.groupModeCategory',
+    categoryAll: 'installedExtensionsManageStatus.groupModeCategoryAll',
+  } as const;
+
+  private static readonly showBuiltinContextKey = 'installedExtensionsManageStatus.showBuiltin';
+  private static readonly showSearchContextKey = 'installedExtensionsManageStatus.showSearch';
+
   private view?: vscode.WebviewView;
   private expandedGroupIds = new Set<string>();
   private hasInitializedExpandedGroups = false;
   private selectedExtensionId?: string;
   private groupMode: GroupMode = 'pack';
   private showBuiltin = false;
+  private showSearch = true;
   private refreshHandle?: NodeJS.Timeout;
   private activityPollHandle?: NodeJS.Timeout;
   private lastRuntimeActivitySignature = '';
 
   constructor(private readonly context: vscode.ExtensionContext) {}
+
+  public syncMenuContext(): void {
+    void this.updateMenuContext();
+  }
 
   public dispose(): void {
     if (this.refreshHandle) {
@@ -234,6 +304,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
   public setGroupMode(mode: GroupMode): void {
     this.groupMode = mode;
     this.expandedGroupIds.clear();
+    void this.updateMenuContext();
     if (this.view) {
       void this.render(this.view);
     }
@@ -242,6 +313,15 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
   public toggleBuiltin(): void {
     this.showBuiltin = !this.showBuiltin;
     this.expandedGroupIds.clear();
+    void this.updateMenuContext();
+    if (this.view) {
+      void this.render(this.view);
+    }
+  }
+
+  public toggleSearch(): void {
+    this.showSearch = !this.showSearch;
+    void this.updateMenuContext();
     if (this.view) {
       void this.render(this.view);
     }
@@ -264,7 +344,14 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
       }
     });
 
-    webviewView.webview.onDidReceiveMessage(async (message: { type: string; value?: string; expandedIds?: string[]; opening?: boolean }) => {
+    webviewView.webview.onDidReceiveMessage(async (
+      message: {
+        type: string;
+        value?: string;
+        expandedIds?: string[];
+        opening?: boolean;
+      }
+    ) => {
       switch (message.type) {
         case 'copyId':
           if (message.value) {
@@ -334,6 +421,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
           ) {
             this.groupMode = message.value;
             this.expandedGroupIds.clear();
+            await this.updateMenuContext();
             await this.render(webviewView);
           }
           break;
@@ -341,6 +429,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
         case 'setShowBuiltin':
           this.showBuiltin = message.value === 'true';
           this.expandedGroupIds.clear();
+          await this.updateMenuContext();
           await this.render(webviewView);
           break;
 
@@ -353,8 +442,44 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
       }
     });
 
+    await this.updateMenuContext();
     await this.render(webviewView);
     this.updateActivityPolling();
+  }
+
+  private async updateMenuContext(): Promise<void> {
+    await Promise.all([
+      vscode.commands.executeCommand(
+        'setContext',
+        InstalledExtensionsWebviewProvider.groupModeContextKeys.pack,
+        this.groupMode === 'pack'
+      ),
+      vscode.commands.executeCommand(
+        'setContext',
+        InstalledExtensionsWebviewProvider.groupModeContextKeys.publisher,
+        this.groupMode === 'publisher'
+      ),
+      vscode.commands.executeCommand(
+        'setContext',
+        InstalledExtensionsWebviewProvider.groupModeContextKeys.category,
+        this.groupMode === 'category'
+      ),
+      vscode.commands.executeCommand(
+        'setContext',
+        InstalledExtensionsWebviewProvider.groupModeContextKeys.categoryAll,
+        this.groupMode === 'category-all'
+      ),
+      vscode.commands.executeCommand(
+        'setContext',
+        InstalledExtensionsWebviewProvider.showBuiltinContextKey,
+        this.showBuiltin
+      ),
+      vscode.commands.executeCommand(
+        'setContext',
+        InstalledExtensionsWebviewProvider.showSearchContextKey,
+        this.showSearch
+      ),
+    ]);
   }
 
   private async setOpeningExtension(id: string, opening: boolean): Promise<void> {
@@ -410,7 +535,8 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
       this.expandedGroupIds,
       this.selectedExtensionId,
       this.groupMode,
-      this.showBuiltin
+      this.showBuiltin,
+      this.showSearch
     );
   }
 
@@ -1032,7 +1158,8 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
     expandedGroupIds: Set<string>,
     selectedExtensionId?: string,
     groupMode: GroupMode = 'pack',
-    showBuiltin = true
+    showBuiltin = true,
+    showSearch = true
   ): string {
     const formatStateSummary = (activeCount: number, idleCount: number, disabledCount: number): string => {
       const parts = [`Active ${activeCount}`, `Idle ${idleCount}`];
@@ -1043,31 +1170,75 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
       return parts.join(' · ');
     };
 
+    const getGroupDescriptionState = (group: PackGroup): { mode: 'static' | 'counts'; prefix: string } => {
+      if (group.isPack || group.id === 'other-installed' || group.id === 'builtin') {
+        return { mode: 'static', prefix: '' };
+      }
+
+      const publisher = this.getPublisherGroupPublisherId(group.id);
+      if (publisher) {
+        return {
+          mode: 'counts',
+          prefix: this.isSyntheticPublisher(publisher) ? 'No publisher metadata' : '',
+        };
+      }
+
+      if (group.id.startsWith('category:')) {
+        const category = group.id.slice('category:'.length);
+        return {
+          mode: 'counts',
+          prefix: this.isSyntheticCategory(category) ? 'No declared category' : '',
+        };
+      }
+
+      return { mode: 'static', prefix: '' };
+    };
+
+    const renderStatCard = (
+      key: 'total' | 'installed' | 'builtin',
+      label: string,
+      value: number,
+      activeCount: number,
+      idleCount: number,
+      disabledCount: number
+    ): string => `
+      <div class="stat-card" data-stat-card="${key}">
+        <div class="stat-label">${label}</div>
+        <div class="stat-value" data-stat-value="${key}">${value}</div>
+        <div class="stat-sub" data-stat-sub="${key}">${formatStateSummary(activeCount, idleCount, disabledCount)}</div>
+      </div>
+    `;
+
     const statsHtml = showBuiltin ? `
       <div class="stats-grid" style="grid-template-columns: repeat(3, minmax(0, 1fr));">
-        <div class="stat-card">
-          <div class="stat-label">Total</div>
-          <div class="stat-value">${counts.total}</div>
-          <div class="stat-sub">${formatStateSummary(counts.active, counts.inactive, counts.disabled)}</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Installed</div>
-          <div class="stat-value">${counts.installed}</div>
-          <div class="stat-sub">${formatStateSummary(counts.installedActive, counts.installedInactive, counts.installedDisabled)}</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Built-in</div>
-          <div class="stat-value">${counts.builtin}</div>
-          <div class="stat-sub">${formatStateSummary(counts.builtinActive, counts.builtinInactive, counts.builtinDisabled)}</div>
-        </div>
+        ${renderStatCard('total', 'Total', counts.total, counts.active, counts.inactive, counts.disabled)}
+        ${renderStatCard(
+          'installed',
+          'Installed',
+          counts.installed,
+          counts.installedActive,
+          counts.installedInactive,
+          counts.installedDisabled
+        )}
+        ${renderStatCard(
+          'builtin',
+          'Built-in',
+          counts.builtin,
+          counts.builtinActive,
+          counts.builtinInactive,
+          counts.builtinDisabled
+        )}
       </div>
     ` : `
       <div class="stats-grid" style="grid-template-columns: 1fr;">
-        <div class="stat-card">
-          <div class="stat-label">Installed</div>
-          <div class="stat-value">${counts.installed}</div>
-          <div class="stat-sub">${formatStateSummary(counts.installedActive, counts.installedInactive, counts.installedDisabled)}</div>
-        </div>
+        ${renderStatCard(
+          'installed',
+          'Installed',
+          counts.installed,
+          counts.installedActive,
+          counts.installedInactive,
+          counts.installedDisabled
+        )}
       </div>
     `;
 
@@ -1112,11 +1283,27 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
         const statusClass = item.isDisabled ? 'disabled' : item.isActive ? 'active' : 'inactive';
         const statusText = item.isDisabled ? 'Disabled' : item.isActive ? 'Active' : 'Idle';
         const kindText = item.isBuiltin ? 'Built-in' : '';
+        const searchText = [
+          item.id,
+          item.name,
+          item.displayName,
+          item.publisher,
+          item.description,
+          item.categories.join(' '),
+        ]
+          .filter((value) => value.trim().length > 0)
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .toLowerCase();
 
         return `
           <article
             class="card ${selectedExtensionId === item.id ? 'selected' : ''}"
             data-id="${escapeHtml(item.id)}"
+            data-search="${escapeHtml(searchText)}"
+            data-active="${item.isActive ? 'true' : 'false'}"
+            data-disabled="${item.isDisabled ? 'true' : 'false'}"
+            data-builtin="${item.isBuiltin ? 'true' : 'false'}"
             role="button"
             tabindex="0"
             aria-label="Open ${escapeHtml(item.id)}"
@@ -1149,11 +1336,12 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
       const openAttr = expandedGroupIds.has(group.id) ? 'open' : '';
       const groupIcon = this.getGroupIconMarkup(group);
       const groupCount = group.items.length;
+      const groupStateSummary = formatStateSummary(activeCount, inactiveCount, disabledCount);
       const useIconCountBadge = group.isPack && !!groupIcon;
       const groupIconMarkup = useIconCountBadge ? `
         <span class="group-icon-wrap">
           ${groupIcon}
-          <span class="group-icon-count">${groupCount}</span>
+          <span class="group-icon-count" data-group-count data-group-count-static="${groupCount}">${groupCount}</span>
         </span>
       ` : groupIcon;
       let groupOpenButton = '';
@@ -1197,6 +1385,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
           <span class="group-title-id">${escapeHtml(publisher)}</span>
         `;
       })();
+      const groupDescriptionState = getGroupDescriptionState(group);
 
       return `
         <div class="group-wrapper">
@@ -1208,10 +1397,16 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
                 <div class="group-title-row">
                   <div class="group-title-wrap">
                     ${groupTitle}
-                    ${useIconCountBadge ? '' : `<span class="group-count">${groupCount}</span>`}
+                    ${useIconCountBadge ? '' : `<span class="group-count" data-group-count data-group-count-static="${groupCount}">${groupCount}</span>`}
                   </div>
-                  <div class="group-desc">${escapeHtml(group.description || '')}</div>
-                  <div class="group-meta">${escapeHtml(formatStateSummary(activeCount, inactiveCount, disabledCount))}</div>
+                  <div
+                    class="group-desc"
+                    data-group-desc
+                    data-group-desc-mode="${groupDescriptionState.mode}"
+                    data-group-desc-prefix="${escapeHtml(groupDescriptionState.prefix)}"
+                    data-group-desc-static="${escapeHtml(group.description || '')}"
+                  >${escapeHtml(group.description || '')}</div>
+                  <div class="group-meta" data-group-meta data-group-meta-static="${escapeHtml(groupStateSummary)}">${escapeHtml(groupStateSummary)}</div>
                 </div>
               </div>
             </summary>
@@ -1248,15 +1443,61 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
     }
 
     .toolbar {
-      display: flex;
-      gap: 8px;
-      align-items: center;
+      display: grid;
+      gap: 6px;
       margin-bottom: 12px;
       position: sticky;
       top: 0;
       background: var(--vscode-sideBar-background);
       padding-bottom: 8px;
       z-index: 2;
+    }
+
+    .search-control {
+      display: grid;
+      gap: 6px;
+    }
+
+    .search-label {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--vscode-descriptionForeground);
+    }
+
+    .search-input {
+      width: 100%;
+      box-sizing: border-box;
+      border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+      background: var(--vscode-input-background, var(--vscode-editorWidget-background, var(--vscode-sideBar-background)));
+      color: var(--vscode-input-foreground, var(--vscode-foreground));
+      border-radius: 6px;
+      padding: 7px 10px;
+      font: inherit;
+    }
+
+    .search-input::placeholder {
+      color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground));
+    }
+
+    .search-input:focus {
+      outline: 1px solid var(--vscode-focusBorder);
+      outline-offset: 1px;
+    }
+
+    .search-meta {
+      min-height: 16px;
+      font-size: 12px;
+      color: var(--vscode-descriptionForeground);
+    }
+
+    .search-empty {
+      margin: 0 0 12px;
+      padding: 10px 12px;
+      border: 1px dashed var(--vscode-panel-border);
+      border-radius: 10px;
+      background: color-mix(in srgb, var(--vscode-editorWidget-background, var(--vscode-sideBar-background)) 84%, transparent);
+      color: var(--vscode-descriptionForeground);
+      font-size: 12px;
     }
 
     button {
@@ -1266,15 +1507,6 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
       border-radius: 6px;
       padding: 6px 10px;
       cursor: pointer;
-      font: inherit;
-    }
-
-    select {
-      border: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border));
-      background: var(--vscode-dropdown-background);
-      color: var(--vscode-dropdown-foreground);
-      border-radius: 6px;
-      padding: 4px 8px;
       font: inherit;
     }
 
@@ -1292,14 +1524,6 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
       color: var(--vscode-descriptionForeground);
       font-size: 12px;
       margin-left: auto;
-    }
-
-    .group-mode-control {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 12px;
-      color: var(--vscode-descriptionForeground);
     }
 
     .stats-grid {
@@ -1337,6 +1561,14 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
     .group-wrapper {
       position: relative;
       margin-bottom: 10px;
+    }
+
+    .group-wrapper.search-open .group:not([open]) > summary {
+      border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-panel-border));
+    }
+
+    .group-wrapper.search-open .group:not([open]) > .group-body {
+      display: grid;
     }
 
     .group {
@@ -1678,26 +1910,29 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
       pointer-events: none;
       animation: openingPulse 1s ease-in-out infinite;
     }
+
+    [hidden] {
+      display: none !important;
+    }
   </style>
 </head>
 <body>
-  <div class="toolbar">
-    <label class="group-mode-control">
-      <span>Group</span>
-      <select id="group-mode-select">
-        <option value="pack"${groupMode === 'pack' ? ' selected' : ''}>Pack</option>
-        <option value="publisher"${groupMode === 'publisher' ? ' selected' : ''}>Publisher</option>
-        <option value="category"${groupMode === 'category' ? ' selected' : ''}>Category</option>
-        <option value="category-all"${groupMode === 'category-all' ? ' selected' : ''}>Category (All)</option>
-      </select>
+  <div class="toolbar"${showSearch ? '' : ' hidden'}>
+    <label class="search-control" for="extension-search-input">
+      <span class="search-label">Search Extensions</span>
+      <input
+        class="search-input"
+        id="extension-search-input"
+        type="search"
+        placeholder="Search by name, ID, publisher, or category"
+        spellcheck="false"
+      />
     </label>
-    <label class="group-mode-control">
-      <input type="checkbox" id="show-builtin-checkbox"${showBuiltin ? ' checked' : ''} />
-      <span>Show Built-in</span>
-    </label>
+    <div class="search-meta" id="search-meta" aria-live="polite"></div>
   </div>
 
   ${statsHtml}
+  <div class="search-empty" id="search-empty" hidden>No extensions match this search.</div>
   ${sections}
 
   <script nonce="${nonce}">
@@ -1705,6 +1940,8 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
     const serverExpandedGroupIds = ${JSON.stringify([...expandedGroupIds])};
     const serverGroupMode = ${JSON.stringify(groupMode)};
     const serverShowBuiltin = ${JSON.stringify(showBuiltin)};
+    const serverShowSearch = ${JSON.stringify(showSearch)};
+    const serverCounts = ${JSON.stringify(counts)};
     const initialViewState = vscode.getState();
     const persistedExpandedGroupIds = initialViewState
       && initialViewState.groupMode === serverGroupMode
@@ -1715,6 +1952,16 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
     let selectedCardId = typeof initialViewState?.selectedCardId === 'string'
       ? initialViewState.selectedCardId
       : ${JSON.stringify(selectedExtensionId ?? '')};
+    let searchQuery = typeof initialViewState?.searchQuery === 'string'
+      ? initialViewState.searchQuery
+      : '';
+    let searchInputFocused = serverShowSearch && initialViewState?.searchInputFocused === true;
+    let searchSelectionStart = Number.isInteger(initialViewState?.searchSelectionStart)
+      ? initialViewState.searchSelectionStart
+      : searchQuery.length;
+    let searchSelectionEnd = Number.isInteger(initialViewState?.searchSelectionEnd)
+      ? initialViewState.searchSelectionEnd
+      : searchSelectionStart;
     const openingCardIds = new Set();
     const openingCardTimers = new Map();
     const openingIndicatorDelayMs = 160;
@@ -1732,8 +1979,237 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
         expandedGroupIds,
         groupMode: serverGroupMode,
         showBuiltin: serverShowBuiltin,
+        showSearch: serverShowSearch,
+        searchQuery,
+        searchInputFocused,
+        searchSelectionStart,
+        searchSelectionEnd,
         ...overrides
       });
+    }
+
+    function normalizeSearchQuery(value) {
+      return value.trim().toLowerCase();
+    }
+
+    function syncSearchInputState(input, focused = document.activeElement === input) {
+      if (!(input instanceof HTMLInputElement)) {
+        return;
+      }
+
+      searchInputFocused = focused;
+      const valueLength = input.value.length;
+      searchSelectionStart = typeof input.selectionStart === 'number'
+        ? Math.min(input.selectionStart, valueLength)
+        : valueLength;
+      searchSelectionEnd = typeof input.selectionEnd === 'number'
+        ? Math.min(input.selectionEnd, valueLength)
+        : searchSelectionStart;
+      persistViewState();
+    }
+
+    function restoreSearchInput(input) {
+      if (!(input instanceof HTMLInputElement)) {
+        return;
+      }
+
+      input.value = searchQuery;
+      const valueLength = input.value.length;
+      const selectionStart = Math.min(searchSelectionStart, valueLength);
+      const selectionEnd = Math.min(searchSelectionEnd, valueLength);
+
+      if (serverShowSearch && searchInputFocused) {
+        input.focus();
+      }
+
+      input.setSelectionRange(selectionStart, selectionEnd);
+    }
+
+    function createEmptySummary() {
+      return {
+        total: 0,
+        active: 0,
+        inactive: 0,
+        disabled: 0,
+        installed: 0,
+        installedActive: 0,
+        installedInactive: 0,
+        installedDisabled: 0,
+        builtin: 0,
+        builtinActive: 0,
+        builtinInactive: 0,
+        builtinDisabled: 0
+      };
+    }
+
+    function summarizeCard(summary, card) {
+      const isBuiltin = card.dataset.builtin === 'true';
+      const isDisabled = card.dataset.disabled === 'true';
+      const isActive = !isDisabled && card.dataset.active === 'true';
+
+      summary.total += 1;
+      if (isDisabled) {
+        summary.disabled += 1;
+      } else if (isActive) {
+        summary.active += 1;
+      } else {
+        summary.inactive += 1;
+      }
+
+      if (isBuiltin) {
+        summary.builtin += 1;
+        if (isDisabled) {
+          summary.builtinDisabled += 1;
+        } else if (isActive) {
+          summary.builtinActive += 1;
+        } else {
+          summary.builtinInactive += 1;
+        }
+      } else {
+        summary.installed += 1;
+        if (isDisabled) {
+          summary.installedDisabled += 1;
+        } else if (isActive) {
+          summary.installedActive += 1;
+        } else {
+          summary.installedInactive += 1;
+        }
+      }
+
+      return summary;
+    }
+
+    function formatCountDescription(prefix, installedCount, builtinCount) {
+      const parts = [];
+      if (prefix) {
+        parts.push(prefix);
+      }
+
+      if (installedCount > 0) {
+        parts.push(installedCount + ' installed');
+      }
+
+      if (builtinCount > 0) {
+        parts.push(builtinCount + ' built-in');
+      }
+
+      return parts.join(' · ');
+    }
+
+    function updateStatCard(key, totalCount, activeCount, idleCount, disabledCount) {
+      const valueNode = document.querySelector('[data-stat-value="' + key + '"]');
+      if (valueNode instanceof HTMLElement) {
+        valueNode.textContent = String(totalCount);
+      }
+
+      const subNode = document.querySelector('[data-stat-sub="' + key + '"]');
+      if (subNode instanceof HTMLElement) {
+        const parts = ['Active ' + activeCount, 'Idle ' + idleCount];
+        if (disabledCount > 0) {
+          parts.push('Disabled ' + disabledCount);
+        }
+
+        subNode.textContent = parts.join(' · ');
+      }
+    }
+
+    function restoreBaseStats() {
+      updateStatCard('installed', serverCounts.installed, serverCounts.installedActive, serverCounts.installedInactive, serverCounts.installedDisabled);
+      if (serverShowBuiltin) {
+        updateStatCard('total', serverCounts.total, serverCounts.active, serverCounts.inactive, serverCounts.disabled);
+        updateStatCard('builtin', serverCounts.builtin, serverCounts.builtinActive, serverCounts.builtinInactive, serverCounts.builtinDisabled);
+      }
+    }
+
+    function restoreGroupSummary(wrapper) {
+      wrapper.querySelectorAll('[data-group-count]').forEach((element) => {
+        if (element instanceof HTMLElement) {
+          element.textContent = element.dataset.groupCountStatic ?? '';
+        }
+      });
+
+      const groupMeta = wrapper.querySelector('[data-group-meta]');
+      if (groupMeta instanceof HTMLElement) {
+        groupMeta.textContent = groupMeta.dataset.groupMetaStatic ?? '';
+      }
+
+      const groupDesc = wrapper.querySelector('[data-group-desc]');
+      if (groupDesc instanceof HTMLElement) {
+        groupDesc.textContent = groupDesc.dataset.groupDescStatic ?? '';
+      }
+    }
+
+    function updateGroupSummary(wrapper, visibleCards) {
+      const visibleCount = visibleCards.length;
+      const groupSummary = createEmptySummary();
+      visibleCards.forEach((card) => {
+        summarizeCard(groupSummary, card);
+      });
+
+      wrapper.querySelectorAll('[data-group-count]').forEach((element) => {
+        if (element instanceof HTMLElement) {
+          element.textContent = String(visibleCount);
+        }
+      });
+
+      const groupMeta = wrapper.querySelector('[data-group-meta]');
+      if (groupMeta instanceof HTMLElement) {
+        const parts = ['Active ' + groupSummary.active, 'Idle ' + groupSummary.inactive];
+        if (groupSummary.disabled > 0) {
+          parts.push('Disabled ' + groupSummary.disabled);
+        }
+
+        groupMeta.textContent = parts.join(' · ');
+      }
+
+      const groupDesc = wrapper.querySelector('[data-group-desc]');
+      if (groupDesc instanceof HTMLElement) {
+        if (groupDesc.dataset.groupDescMode === 'counts') {
+          groupDesc.textContent = formatCountDescription(
+            groupDesc.dataset.groupDescPrefix ?? '',
+            groupSummary.installed,
+            groupSummary.builtin
+          );
+        } else {
+          groupDesc.textContent = groupDesc.dataset.groupDescStatic ?? '';
+        }
+      }
+    }
+
+    function updateVisibleStats(visibleCards) {
+      const visibleExtensionIds = new Set();
+      const visibleSummary = createEmptySummary();
+
+      visibleCards.forEach((card) => {
+        const id = card.dataset.id;
+        if (!id || visibleExtensionIds.has(id)) {
+          return;
+        }
+
+        visibleExtensionIds.add(id);
+        summarizeCard(visibleSummary, card);
+      });
+
+      updateStatCard('total', visibleSummary.total, visibleSummary.active, visibleSummary.inactive, visibleSummary.disabled);
+      updateStatCard(
+        'installed',
+        visibleSummary.installed,
+        visibleSummary.installedActive,
+        visibleSummary.installedInactive,
+        visibleSummary.installedDisabled
+      );
+
+      if (serverShowBuiltin) {
+        updateStatCard(
+          'builtin',
+          visibleSummary.builtin,
+          visibleSummary.builtinActive,
+          visibleSummary.builtinInactive,
+          visibleSummary.builtinDisabled
+        );
+      }
+
+      return visibleSummary.total;
     }
 
     function restoreExpandedGroups() {
@@ -1771,6 +2247,80 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
         type: 'setExpandedGroups',
         expandedIds
       });
+    }
+
+    function applySearchFilter() {
+      const normalizedQuery = serverShowSearch ? normalizeSearchQuery(searchQuery) : '';
+
+      document.querySelectorAll('.card[data-id]').forEach((card) => {
+        if (!(card instanceof HTMLElement)) {
+          return;
+        }
+
+        const matches = normalizedQuery.length === 0
+          || (card.dataset.search ?? '').includes(normalizedQuery);
+        card.hidden = !matches;
+      });
+
+      if (normalizedQuery.length === 0) {
+        document.querySelectorAll('.group-wrapper').forEach((wrapper) => {
+          if (!(wrapper instanceof HTMLElement)) {
+            return;
+          }
+
+          wrapper.hidden = false;
+          wrapper.classList.remove('search-open');
+          restoreGroupSummary(wrapper);
+        });
+
+        restoreBaseStats();
+
+        const searchMeta = document.getElementById('search-meta');
+        if (searchMeta instanceof HTMLElement) {
+          searchMeta.textContent = serverCounts.total + ' extension' + (serverCounts.total === 1 ? '' : 's');
+        }
+
+        const searchEmpty = document.getElementById('search-empty');
+        if (searchEmpty instanceof HTMLElement) {
+          searchEmpty.hidden = serverCounts.total > 0;
+          searchEmpty.textContent = 'No extensions to show.';
+        }
+
+        return;
+      }
+
+      const visibleCards = [];
+      document.querySelectorAll('.group-wrapper').forEach((wrapper) => {
+        if (!(wrapper instanceof HTMLElement)) {
+          return;
+        }
+
+        const groupVisibleCards = Array.from(wrapper.querySelectorAll('.card[data-id]'))
+          .filter((card) => card instanceof HTMLElement && !card.hidden);
+        const hasVisibleCards = groupVisibleCards.length > 0;
+
+        wrapper.hidden = !hasVisibleCards;
+        wrapper.classList.toggle('search-open', normalizedQuery.length > 0 && hasVisibleCards);
+        updateGroupSummary(wrapper, groupVisibleCards);
+        visibleCards.push(...groupVisibleCards);
+      });
+
+      const visibleExtensionCount = updateVisibleStats(visibleCards);
+
+      const searchMeta = document.getElementById('search-meta');
+      if (searchMeta instanceof HTMLElement) {
+        searchMeta.textContent = normalizedQuery.length > 0
+          ? visibleExtensionCount + ' match' + (visibleExtensionCount === 1 ? '' : 'es')
+          : visibleExtensionCount + ' extension' + (visibleExtensionCount === 1 ? '' : 's');
+      }
+
+      const searchEmpty = document.getElementById('search-empty');
+      if (searchEmpty instanceof HTMLElement) {
+        searchEmpty.hidden = visibleExtensionCount > 0;
+        searchEmpty.textContent = normalizedQuery.length > 0
+          ? 'No extensions match this search.'
+          : 'No extensions to show.';
+      }
     }
 
     function setSelectedCard(id) {
@@ -1839,34 +2389,49 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
 
     restoreExpandedGroups();
     applySelectedCard();
+    const searchInput = document.getElementById('extension-search-input');
+    if (searchInput instanceof HTMLInputElement) {
+      restoreSearchInput(searchInput);
+      searchInput.addEventListener('input', () => {
+        searchQuery = searchInput.value;
+        applySearchFilter();
+        syncSearchInputState(searchInput, true);
+      });
+      searchInput.addEventListener('focus', () => {
+        syncSearchInputState(searchInput, true);
+      });
+      searchInput.addEventListener('blur', () => {
+        syncSearchInputState(searchInput, false);
+      });
+      searchInput.addEventListener('click', () => {
+        syncSearchInputState(searchInput);
+      });
+      searchInput.addEventListener('keyup', () => {
+        syncSearchInputState(searchInput);
+      });
+      searchInput.addEventListener('select', () => {
+        syncSearchInputState(searchInput);
+      });
+      searchInput.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape' || searchInput.value.length === 0) {
+          return;
+        }
+
+        event.preventDefault();
+        searchInput.value = '';
+        searchQuery = '';
+        applySearchFilter();
+        syncSearchInputState(searchInput, true);
+      });
+    }
+
+    applySearchFilter();
     persistViewState();
     sendExpandedGroups();
 
     document.querySelectorAll('details.group').forEach((details) => {
       details.addEventListener('toggle', sendExpandedGroups);
     });
-
-    const groupModeSelect = document.getElementById('group-mode-select');
-    if (groupModeSelect instanceof HTMLSelectElement) {
-      groupModeSelect.addEventListener('change', () => {
-        persistViewState([], { groupMode: groupModeSelect.value });
-        vscode.postMessage({
-          type: 'setGroupMode',
-          value: groupModeSelect.value
-        });
-      });
-    }
-
-    const showBuiltinCheckbox = document.getElementById('show-builtin-checkbox');
-    if (showBuiltinCheckbox instanceof HTMLInputElement) {
-      showBuiltinCheckbox.addEventListener('change', () => {
-        persistViewState([], { showBuiltin: showBuiltinCheckbox.checked });
-        vscode.postMessage({
-          type: 'setShowBuiltin',
-          value: showBuiltinCheckbox.checked ? 'true' : 'false'
-        });
-      });
-    }
 
     window.addEventListener('message', (event) => {
       const message = event.data;

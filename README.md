@@ -17,13 +17,14 @@ This extension helps you browse what is installed, see what is active, idle, or 
 
 1. Open the `Ext Manage` icon in the Activity Bar.
 2. Browse the `Installed Extensions` view.
-3. Pick a grouping mode:
+3. Use the search box at the top to filter extensions in the current view.
+4. Use the view title `...` menu to pick a grouping mode:
    - `Pack`
    - `Publisher`
    - `Category`
    - `Category (All)`
-4. Turn on `Show Built-in` if you also want to include built-in VS Code extensions.
-5. Click any extension card to open its details in VS Code.
+5. Use the same `...` menu to toggle built-in extensions on or off.
+6. Click any extension card to open its details in VS Code.
 
 ## What You Can Do
 
@@ -37,7 +38,7 @@ This extension helps you browse what is installed, see what is active, idle, or 
 
 ## Notes
 
-- Built-in extensions are optional in the main list and can be shown with the `Show Built-in` checkbox.
+- Built-in extensions are optional in the main list and can be toggled from the view title `...` menu.
 - This sidebar view is for browsing and quick actions. It does not install, uninstall, enable, or disable extensions directly.
 
 ## Contributing

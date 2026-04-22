@@ -2,7 +2,7 @@
   "name": "installed-extensions-manage-status",
   "displayName": "Installed Extensions Manage Status",
   "description": "Browse installed VS Code extensions with pack grouping, status badges, and quick manage actions.",
-  "version": "0.1.25",
+  "version": "0.1.26",
   "publisher": "gonghui",
   "license": "MIT",
   "repository": {
@@ -66,20 +66,56 @@
         "title": "Group by Pack"
       },
       {
+        "command": "installedExtensionsManageStatus.groupByPackChecked",
+        "title": "Group by Pack\u2002\u2002\u2713"
+      },
+      {
         "command": "installedExtensionsManageStatus.groupByPublisher",
         "title": "Group by Publisher"
+      },
+      {
+        "command": "installedExtensionsManageStatus.groupByPublisherChecked",
+        "title": "Group by Publisher\u2002\u2002\u2713"
       },
       {
         "command": "installedExtensionsManageStatus.groupByCategory",
         "title": "Group by Category"
       },
       {
+        "command": "installedExtensionsManageStatus.groupByCategoryChecked",
+        "title": "Group by Category\u2002\u2002\u2713"
+      },
+      {
         "command": "installedExtensionsManageStatus.groupByCategoryAll",
         "title": "Group by Category (All)"
       },
       {
+        "command": "installedExtensionsManageStatus.groupByCategoryAllChecked",
+        "title": "Group by Category (All)\u2002\u2002\u2713"
+      },
+      {
         "command": "installedExtensionsManageStatus.toggleBuiltin",
         "title": "Toggle Built-in"
+      },
+      {
+        "command": "installedExtensionsManageStatus.toggleBuiltinUnchecked",
+        "title": "Show Built-in"
+      },
+      {
+        "command": "installedExtensionsManageStatus.toggleBuiltinChecked",
+        "title": "Show Built-in\u2002\u2002\u2713"
+      },
+      {
+        "command": "installedExtensionsManageStatus.toggleSearch",
+        "title": "Toggle Search"
+      },
+      {
+        "command": "installedExtensionsManageStatus.toggleSearchUnchecked",
+        "title": "Show Search"
+      },
+      {
+        "command": "installedExtensionsManageStatus.toggleSearchChecked",
+        "title": "Show Search\u2002\u2002\u2713"
       }
     ],
     "menus": {
@@ -91,28 +127,97 @@
         },
         {
           "command": "installedExtensionsManageStatus.groupByPack",
-          "when": "view == installedExtensionsManageStatusView",
+          "when": "view == installedExtensionsManageStatusView && !installedExtensionsManageStatus.groupModePack",
+          "group": "1_group@1"
+        },
+        {
+          "command": "installedExtensionsManageStatus.groupByPackChecked",
+          "when": "view == installedExtensionsManageStatusView && installedExtensionsManageStatus.groupModePack",
           "group": "1_group@1"
         },
         {
           "command": "installedExtensionsManageStatus.groupByPublisher",
-          "when": "view == installedExtensionsManageStatusView",
+          "when": "view == installedExtensionsManageStatusView && !installedExtensionsManageStatus.groupModePublisher",
+          "group": "1_group@2"
+        },
+        {
+          "command": "installedExtensionsManageStatus.groupByPublisherChecked",
+          "when": "view == installedExtensionsManageStatusView && installedExtensionsManageStatus.groupModePublisher",
           "group": "1_group@2"
         },
         {
           "command": "installedExtensionsManageStatus.groupByCategory",
-          "when": "view == installedExtensionsManageStatusView",
+          "when": "view == installedExtensionsManageStatusView && !installedExtensionsManageStatus.groupModeCategory",
+          "group": "1_group@3"
+        },
+        {
+          "command": "installedExtensionsManageStatus.groupByCategoryChecked",
+          "when": "view == installedExtensionsManageStatusView && installedExtensionsManageStatus.groupModeCategory",
           "group": "1_group@3"
         },
         {
           "command": "installedExtensionsManageStatus.groupByCategoryAll",
-          "when": "view == installedExtensionsManageStatusView",
+          "when": "view == installedExtensionsManageStatusView && !installedExtensionsManageStatus.groupModeCategoryAll",
           "group": "1_group@4"
         },
         {
-          "command": "installedExtensionsManageStatus.toggleBuiltin",
-          "when": "view == installedExtensionsManageStatusView",
+          "command": "installedExtensionsManageStatus.groupByCategoryAllChecked",
+          "when": "view == installedExtensionsManageStatusView && installedExtensionsManageStatus.groupModeCategoryAll",
+          "group": "1_group@4"
+        },
+        {
+          "command": "installedExtensionsManageStatus.toggleSearchUnchecked",
+          "when": "view == installedExtensionsManageStatusView && !installedExtensionsManageStatus.showSearch",
           "group": "2_filter@1"
+        },
+        {
+          "command": "installedExtensionsManageStatus.toggleSearchChecked",
+          "when": "view == installedExtensionsManageStatusView && installedExtensionsManageStatus.showSearch",
+          "group": "2_filter@1"
+        },
+        {
+          "command": "installedExtensionsManageStatus.toggleBuiltinUnchecked",
+          "when": "view == installedExtensionsManageStatusView && !installedExtensionsManageStatus.showBuiltin",
+          "group": "2_filter@2"
+        },
+        {
+          "command": "installedExtensionsManageStatus.toggleBuiltinChecked",
+          "when": "view == installedExtensionsManageStatusView && installedExtensionsManageStatus.showBuiltin",
+          "group": "2_filter@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "installedExtensionsManageStatus.groupByPackChecked",
+          "when": "false"
+        },
+        {
+          "command": "installedExtensionsManageStatus.groupByPublisherChecked",
+          "when": "false"
+        },
+        {
+          "command": "installedExtensionsManageStatus.groupByCategoryChecked",
+          "when": "false"
+        },
+        {
+          "command": "installedExtensionsManageStatus.groupByCategoryAllChecked",
+          "when": "false"
+        },
+        {
+          "command": "installedExtensionsManageStatus.toggleBuiltinUnchecked",
+          "when": "false"
+        },
+        {
+          "command": "installedExtensionsManageStatus.toggleBuiltinChecked",
+          "when": "false"
+        },
+        {
+          "command": "installedExtensionsManageStatus.toggleSearchUnchecked",
+          "when": "false"
+        },
+        {
+          "command": "installedExtensionsManageStatus.toggleSearchChecked",
+          "when": "false"
         }
       ]
     }
