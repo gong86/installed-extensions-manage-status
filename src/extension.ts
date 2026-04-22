@@ -2363,8 +2363,118 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
 
     function bindGroupToggleListeners() {
       document.querySelectorAll('details.group').forEach((details) => {
+        if (!(details instanceof HTMLDetailsElement) || details.dataset.toggleBound === 'true') {
+          return;
+        }
+
         details.addEventListener('toggle', sendExpandedGroups);
+        details.dataset.toggleBound = 'true';
       });
+    }
+
+    function getDirectGroupOpenWrap(wrapper) {
+      if (!(wrapper instanceof HTMLElement)) {
+        return undefined;
+      }
+
+      return Array.from(wrapper.children).find((child) =>
+        child instanceof HTMLElement && child.classList.contains('group-open-wrap')
+      );
+    }
+
+    function patchGroupWrapper(existingWrapper, incomingWrapper) {
+      if (!(existingWrapper instanceof HTMLElement) || !(incomingWrapper instanceof HTMLElement)) {
+        return;
+      }
+
+      const existingOpenWrap = getDirectGroupOpenWrap(existingWrapper);
+      const incomingOpenWrap = getDirectGroupOpenWrap(incomingWrapper);
+
+      if (existingOpenWrap instanceof HTMLElement && incomingOpenWrap instanceof HTMLElement) {
+        existingOpenWrap.innerHTML = incomingOpenWrap.innerHTML;
+      } else if (existingOpenWrap instanceof HTMLElement && !incomingOpenWrap) {
+        existingOpenWrap.remove();
+      } else if (!existingOpenWrap && incomingOpenWrap instanceof HTMLElement) {
+        existingWrapper.insertBefore(incomingOpenWrap, existingWrapper.firstChild ?? null);
+      }
+
+      const existingDetails = existingWrapper.querySelector('details.group[data-group-id]');
+      const incomingDetails = incomingWrapper.querySelector('details.group[data-group-id]');
+      if (!(existingDetails instanceof HTMLDetailsElement) || !(incomingDetails instanceof HTMLDetailsElement)) {
+        return;
+      }
+
+      const incomingSummary = incomingDetails.querySelector('summary');
+      const existingSummary = existingDetails.querySelector('summary');
+      if (existingSummary instanceof HTMLElement && incomingSummary instanceof HTMLElement) {
+        existingSummary.innerHTML = incomingSummary.innerHTML;
+      }
+
+      const incomingBody = incomingDetails.querySelector('.group-body');
+      const existingBody = existingDetails.querySelector('.group-body');
+      if (existingBody instanceof HTMLElement && incomingBody instanceof HTMLElement) {
+        existingBody.innerHTML = incomingBody.innerHTML;
+      }
+    }
+
+    function syncGroupWrappers(nextSectionsHtml) {
+      if (!(groupsRoot instanceof HTMLElement)) {
+        return new Set();
+      }
+
+      const template = document.createElement('template');
+      template.innerHTML = typeof nextSectionsHtml === 'string' ? nextSectionsHtml.trim() : '';
+      const incomingWrappers = Array.from(template.content.querySelectorAll('.group-wrapper'));
+      const existingWrappers = Array.from(groupsRoot.querySelectorAll(':scope > .group-wrapper'));
+      const existingById = new Map();
+
+      existingWrappers.forEach((wrapper) => {
+        if (!(wrapper instanceof HTMLElement)) {
+          return;
+        }
+
+        const details = wrapper.querySelector('details.group[data-group-id]');
+        const groupId = details?.getAttribute('data-group-id');
+        if (groupId) {
+          existingById.set(groupId, wrapper);
+        }
+      });
+
+      const seenGroupIds = new Set();
+      incomingWrappers.forEach((incomingWrapper) => {
+        if (!(incomingWrapper instanceof HTMLElement)) {
+          return;
+        }
+
+        const incomingDetails = incomingWrapper.querySelector('details.group[data-group-id]');
+        const groupId = incomingDetails?.getAttribute('data-group-id');
+        if (!groupId) {
+          return;
+        }
+
+        seenGroupIds.add(groupId);
+        const existingWrapper = existingById.get(groupId);
+        if (existingWrapper) {
+          patchGroupWrapper(existingWrapper, incomingWrapper);
+          groupsRoot.appendChild(existingWrapper);
+        } else {
+          groupsRoot.appendChild(incomingWrapper);
+        }
+      });
+
+      existingWrappers.forEach((wrapper) => {
+        if (!(wrapper instanceof HTMLElement)) {
+          return;
+        }
+
+        const details = wrapper.querySelector('details.group[data-group-id]');
+        const groupId = details?.getAttribute('data-group-id');
+        if (groupId && !seenGroupIds.has(groupId)) {
+          wrapper.remove();
+        }
+      });
+
+      return seenGroupIds;
     }
 
     function applySearchFilter() {
@@ -2525,7 +2635,9 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
         return;
       }
 
-      currentExpandedGroupIds = Array.isArray(payload.expandedGroupIds)
+      const previousGroupMode = currentGroupMode;
+      const previousShowBuiltin = currentShowBuiltin;
+      const payloadExpandedGroupIds = Array.isArray(payload.expandedGroupIds)
         ? payload.expandedGroupIds.filter((value) => typeof value === 'string')
         : [];
       currentGroupMode = payload.groupMode;
@@ -2535,6 +2647,8 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
       selectedCardId = typeof payload.selectedExtensionId === 'string'
         ? payload.selectedExtensionId
         : '';
+      const shouldTrustPayloadExpandedGroups = currentGroupMode !== previousGroupMode
+        || currentShowBuiltin !== previousShowBuiltin;
 
       if (toolbar instanceof HTMLElement) {
         toolbar.hidden = !currentShowSearch;
@@ -2549,8 +2663,19 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
         statsRoot.innerHTML = payload.statsHtml;
       }
 
-      if (groupsRoot instanceof HTMLElement && typeof payload.sectionsHtml === 'string') {
-        groupsRoot.innerHTML = payload.sectionsHtml;
+      let validGroupIds = new Set();
+      if (typeof payload.sectionsHtml === 'string') {
+        validGroupIds = syncGroupWrappers(payload.sectionsHtml);
+      }
+
+      const localExpandedGroupIds = currentExpandedGroupIds.filter((id) => validGroupIds.has(id));
+      const nextPayloadExpandedGroupIds = payloadExpandedGroupIds.filter((id) => validGroupIds.has(id));
+      if (shouldTrustPayloadExpandedGroups) {
+        currentExpandedGroupIds = nextPayloadExpandedGroupIds;
+      } else if (localExpandedGroupIds.length > 0 || currentExpandedGroupIds.length > 0) {
+        currentExpandedGroupIds = localExpandedGroupIds;
+      } else {
+        currentExpandedGroupIds = nextPayloadExpandedGroupIds;
       }
 
       restoreExpandedGroups();
