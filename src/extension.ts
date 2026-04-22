@@ -95,6 +95,17 @@ type SummaryCounts = {
 
 type GroupMode = 'pack' | 'publisher' | 'category' | 'category-all';
 
+type WebviewRenderPayload = {
+  counts: SummaryCounts;
+  statsHtml: string;
+  sectionsHtml: string;
+  expandedGroupIds: string[];
+  selectedExtensionId?: string;
+  groupMode: GroupMode;
+  showBuiltin: boolean;
+  showSearch: boolean;
+};
+
 export function activate(context: vscode.ExtensionContext): void {
   const provider = new InstalledExtensionsWebviewProvider(context);
   provider.syncMenuContext();
@@ -230,6 +241,9 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
   private groupMode: GroupMode = 'pack';
   private showBuiltin = false;
   private showSearch = true;
+  private hasRenderedHtml = false;
+  private webviewReady = false;
+  private pendingRenderPayload?: WebviewRenderPayload;
   private refreshHandle?: NodeJS.Timeout;
   private activityPollHandle?: NodeJS.Timeout;
   private lastRuntimeActivitySignature = '';
@@ -246,6 +260,9 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
       this.refreshHandle = undefined;
     }
 
+    this.hasRenderedHtml = false;
+    this.webviewReady = false;
+    this.pendingRenderPayload = undefined;
     this.stopActivityPolling();
   }
 
@@ -331,6 +348,9 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
     webviewView: vscode.WebviewView
   ): Promise<void> {
     this.view = webviewView;
+    this.hasRenderedHtml = false;
+    this.webviewReady = false;
+    this.pendingRenderPayload = undefined;
 
     webviewView.webview.options = {
       enableScripts: true,
@@ -410,6 +430,18 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
 
         case 'setExpandedGroups':
           this.expandedGroupIds = new Set(message.expandedIds ?? []);
+          break;
+
+        case 'webviewReady':
+          this.webviewReady = true;
+          if (this.pendingRenderPayload) {
+            const nextPayload = this.pendingRenderPayload;
+            this.pendingRenderPayload = undefined;
+            await webviewView.webview.postMessage({
+              type: 'replaceViewContent',
+              payload: nextPayload,
+            });
+          }
           break;
 
         case 'setGroupMode':
@@ -502,7 +534,6 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
 
   private async render(webviewView: vscode.WebviewView): Promise<void> {
     const webview = webviewView.webview;
-    const nonce = getNonce();
     const inventory = this.getInventory(webview);
     this.lastRuntimeActivitySignature = this.getRuntimeActivitySignature();
     webview.options = {
@@ -527,9 +558,8 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
 
     webviewView.description = `${counts.total} total (${counts.builtin} built-in)`;
 
-    webview.html = this.getHtml(
+    const payload = this.getRenderPayload(
       webview,
-      nonce,
       filteredGroups,
       filteredCounts,
       this.expandedGroupIds,
@@ -538,6 +568,59 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
       this.showBuiltin,
       this.showSearch
     );
+
+    if (!this.hasRenderedHtml || webview.html.length === 0) {
+      const nonce = getNonce();
+      webview.html = this.getHtml(webview, nonce, payload);
+      this.hasRenderedHtml = true;
+      this.webviewReady = false;
+      this.pendingRenderPayload = undefined;
+      return;
+    }
+
+    if (!this.webviewReady) {
+      this.pendingRenderPayload = payload;
+      return;
+    }
+
+    const delivered = await webview.postMessage({
+      type: 'replaceViewContent',
+      payload,
+    });
+
+    if (!delivered) {
+      this.pendingRenderPayload = payload;
+    }
+  }
+
+  private getRenderPayload(
+    webview: vscode.Webview,
+    groups: PackGroup[],
+    counts: SummaryCounts,
+    expandedGroupIds: Set<string>,
+    selectedExtensionId?: string,
+    groupMode: GroupMode = 'pack',
+    showBuiltin = true,
+    showSearch = true
+  ): WebviewRenderPayload {
+    const { statsHtml, sectionsHtml } = this.getViewMarkup(
+      webview,
+      groups,
+      counts,
+      expandedGroupIds,
+      selectedExtensionId
+    );
+
+    return {
+      counts,
+      statsHtml,
+      sectionsHtml,
+      expandedGroupIds: [...expandedGroupIds],
+      selectedExtensionId,
+      groupMode,
+      showBuiltin,
+      showSearch,
+    };
   }
 
   private getInventory(webview: vscode.Webview): ExtensionInventory {
@@ -1150,17 +1233,13 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
       });
   }
 
-  private getHtml(
+  private getViewMarkup(
     webview: vscode.Webview,
-    nonce: string,
     groups: PackGroup[],
     counts: SummaryCounts,
     expandedGroupIds: Set<string>,
-    selectedExtensionId?: string,
-    groupMode: GroupMode = 'pack',
-    showBuiltin = true,
-    showSearch = true
-  ): string {
+    selectedExtensionId?: string
+  ): { statsHtml: string; sectionsHtml: string } {
     const formatStateSummary = (activeCount: number, idleCount: number, disabledCount: number): string => {
       const parts = [`Active ${activeCount}`, `Idle ${idleCount}`];
       if (disabledCount > 0) {
@@ -1209,7 +1288,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
       </div>
     `;
 
-    const statsHtml = showBuiltin ? `
+    const statsHtml = this.showBuiltin ? `
       <div class="stats-grid" style="grid-template-columns: repeat(3, minmax(0, 1fr));">
         ${renderStatCard('total', 'Total', counts.total, counts.active, counts.inactive, counts.disabled)}
         ${renderStatCard(
@@ -1418,6 +1497,17 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
       `;
     }).join('\n');
 
+    return {
+      statsHtml,
+      sectionsHtml: sections,
+    };
+  }
+
+  private getHtml(
+    webview: vscode.Webview,
+    nonce: string,
+    initialRenderPayload: WebviewRenderPayload
+  ): string {
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1917,7 +2007,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
   </style>
 </head>
 <body>
-  <div class="toolbar"${showSearch ? '' : ' hidden'}>
+  <div class="toolbar"${initialRenderPayload.showSearch ? '' : ' hidden'}>
     <label class="search-control" for="extension-search-input">
       <span class="search-label">Search Extensions</span>
       <input
@@ -1931,37 +2021,46 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
     <div class="search-meta" id="search-meta" aria-live="polite"></div>
   </div>
 
-  ${statsHtml}
+  <div id="stats-root">${initialRenderPayload.statsHtml}</div>
   <div class="search-empty" id="search-empty" hidden>No extensions match this search.</div>
-  ${sections}
+  <div id="groups-root">${initialRenderPayload.sectionsHtml}</div>
 
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
-    const serverExpandedGroupIds = ${JSON.stringify([...expandedGroupIds])};
-    const serverGroupMode = ${JSON.stringify(groupMode)};
-    const serverShowBuiltin = ${JSON.stringify(showBuiltin)};
-    const serverShowSearch = ${JSON.stringify(showSearch)};
-    const serverCounts = ${JSON.stringify(counts)};
+    const initialRenderPayload = ${JSON.stringify(initialRenderPayload)};
+    let currentExpandedGroupIds = Array.isArray(initialRenderPayload.expandedGroupIds)
+      ? initialRenderPayload.expandedGroupIds.filter((value) => typeof value === 'string')
+      : [];
+    let currentGroupMode = initialRenderPayload.groupMode;
+    let currentShowBuiltin = initialRenderPayload.showBuiltin === true;
+    let currentShowSearch = initialRenderPayload.showSearch === true;
+    let currentCounts = initialRenderPayload.counts;
     const initialViewState = vscode.getState();
     const persistedExpandedGroupIds = initialViewState
-      && initialViewState.groupMode === serverGroupMode
-      && initialViewState.showBuiltin === serverShowBuiltin
+      && initialViewState.groupMode === currentGroupMode
+      && initialViewState.showBuiltin === currentShowBuiltin
       && Array.isArray(initialViewState.expandedGroupIds)
         ? initialViewState.expandedGroupIds.filter((value) => typeof value === 'string')
-        : serverExpandedGroupIds;
+        : currentExpandedGroupIds;
+    currentExpandedGroupIds = persistedExpandedGroupIds;
     let selectedCardId = typeof initialViewState?.selectedCardId === 'string'
       ? initialViewState.selectedCardId
-      : ${JSON.stringify(selectedExtensionId ?? '')};
+      : (typeof initialRenderPayload.selectedExtensionId === 'string'
+        ? initialRenderPayload.selectedExtensionId
+        : '');
     let searchQuery = typeof initialViewState?.searchQuery === 'string'
       ? initialViewState.searchQuery
       : '';
-    let searchInputFocused = serverShowSearch && initialViewState?.searchInputFocused === true;
+    let searchInputFocused = currentShowSearch && initialViewState?.searchInputFocused === true;
     let searchSelectionStart = Number.isInteger(initialViewState?.searchSelectionStart)
       ? initialViewState.searchSelectionStart
       : searchQuery.length;
     let searchSelectionEnd = Number.isInteger(initialViewState?.searchSelectionEnd)
       ? initialViewState.searchSelectionEnd
       : searchSelectionStart;
+    const toolbar = document.querySelector('.toolbar');
+    const statsRoot = document.getElementById('stats-root');
+    const groupsRoot = document.getElementById('groups-root');
     const openingCardIds = new Set();
     const openingCardTimers = new Map();
     const openingIndicatorDelayMs = 160;
@@ -1977,9 +2076,9 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
       vscode.setState({
         selectedCardId,
         expandedGroupIds,
-        groupMode: serverGroupMode,
-        showBuiltin: serverShowBuiltin,
-        showSearch: serverShowSearch,
+        groupMode: currentGroupMode,
+        showBuiltin: currentShowBuiltin,
+        showSearch: currentShowSearch,
         searchQuery,
         searchInputFocused,
         searchSelectionStart,
@@ -2018,7 +2117,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
       const selectionStart = Math.min(searchSelectionStart, valueLength);
       const selectionEnd = Math.min(searchSelectionEnd, valueLength);
 
-      if (serverShowSearch && searchInputFocused) {
+      if (currentShowSearch && searchInputFocused) {
         input.focus();
       }
 
@@ -2114,10 +2213,22 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
     }
 
     function restoreBaseStats() {
-      updateStatCard('installed', serverCounts.installed, serverCounts.installedActive, serverCounts.installedInactive, serverCounts.installedDisabled);
-      if (serverShowBuiltin) {
-        updateStatCard('total', serverCounts.total, serverCounts.active, serverCounts.inactive, serverCounts.disabled);
-        updateStatCard('builtin', serverCounts.builtin, serverCounts.builtinActive, serverCounts.builtinInactive, serverCounts.builtinDisabled);
+      updateStatCard(
+        'installed',
+        currentCounts.installed,
+        currentCounts.installedActive,
+        currentCounts.installedInactive,
+        currentCounts.installedDisabled
+      );
+      if (currentShowBuiltin) {
+        updateStatCard('total', currentCounts.total, currentCounts.active, currentCounts.inactive, currentCounts.disabled);
+        updateStatCard(
+          'builtin',
+          currentCounts.builtin,
+          currentCounts.builtinActive,
+          currentCounts.builtinInactive,
+          currentCounts.builtinDisabled
+        );
       }
     }
 
@@ -2199,7 +2310,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
         visibleSummary.installedDisabled
       );
 
-      if (serverShowBuiltin) {
+      if (currentShowBuiltin) {
         updateStatCard(
           'builtin',
           visibleSummary.builtin,
@@ -2213,7 +2324,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
     }
 
     function restoreExpandedGroups() {
-      const desiredIds = new Set(persistedExpandedGroupIds);
+      const desiredIds = new Set(currentExpandedGroupIds);
       document.querySelectorAll('details.group[data-group-id]').forEach((details) => {
         if (!(details instanceof HTMLDetailsElement)) {
           return;
@@ -2241,6 +2352,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
 
     function sendExpandedGroups() {
       const expandedIds = getExpandedGroupIds();
+      currentExpandedGroupIds = expandedIds;
       persistViewState(expandedIds);
 
       vscode.postMessage({
@@ -2249,8 +2361,14 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
       });
     }
 
+    function bindGroupToggleListeners() {
+      document.querySelectorAll('details.group').forEach((details) => {
+        details.addEventListener('toggle', sendExpandedGroups);
+      });
+    }
+
     function applySearchFilter() {
-      const normalizedQuery = serverShowSearch ? normalizeSearchQuery(searchQuery) : '';
+      const normalizedQuery = currentShowSearch ? normalizeSearchQuery(searchQuery) : '';
 
       document.querySelectorAll('.card[data-id]').forEach((card) => {
         if (!(card instanceof HTMLElement)) {
@@ -2277,12 +2395,12 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
 
         const searchMeta = document.getElementById('search-meta');
         if (searchMeta instanceof HTMLElement) {
-          searchMeta.textContent = serverCounts.total + ' extension' + (serverCounts.total === 1 ? '' : 's');
+          searchMeta.textContent = currentCounts.total + ' extension' + (currentCounts.total === 1 ? '' : 's');
         }
 
         const searchEmpty = document.getElementById('search-empty');
         if (searchEmpty instanceof HTMLElement) {
-          searchEmpty.hidden = serverCounts.total > 0;
+          searchEmpty.hidden = currentCounts.total > 0;
           searchEmpty.textContent = 'No extensions to show.';
         }
 
@@ -2339,12 +2457,6 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
     }
 
     function setOpeningCard(id, opening) {
-      const card = document.querySelector('.card[data-id="' + id + '"]');
-      if (!(card instanceof HTMLElement)) {
-        return;
-      }
-
-      const badge = card.querySelector('.opening-badge');
       const existingTimer = openingCardTimers.get(id);
       if (existingTimer) {
         clearTimeout(existingTimer);
@@ -2353,7 +2465,10 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
 
       if (opening) {
         openingCardIds.add(id);
-        card.setAttribute('aria-busy', 'true');
+        const card = document.querySelector('.card[data-id="' + id + '"]');
+        if (card instanceof HTMLElement) {
+          card.setAttribute('aria-busy', 'true');
+        }
 
         const timer = setTimeout(() => {
           openingCardTimers.delete(id);
@@ -2361,7 +2476,14 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
             return;
           }
 
-          card.classList.add('opening');
+          const nextCard = document.querySelector('.card[data-id="' + id + '"]');
+          if (!(nextCard instanceof HTMLElement)) {
+            return;
+          }
+
+          const badge = nextCard.querySelector('.opening-badge');
+          nextCard.classList.add('opening');
+          nextCard.setAttribute('aria-busy', 'true');
           if (badge instanceof HTMLElement) {
             badge.hidden = false;
           }
@@ -2370,12 +2492,73 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
         openingCardTimers.set(id, timer);
       } else {
         openingCardIds.delete(id);
-        card.classList.remove('opening');
-        card.removeAttribute('aria-busy');
-        if (badge instanceof HTMLElement) {
-          badge.hidden = true;
+        const card = document.querySelector('.card[data-id="' + id + '"]');
+        if (card instanceof HTMLElement) {
+          const badge = card.querySelector('.opening-badge');
+          card.classList.remove('opening');
+          card.removeAttribute('aria-busy');
+          if (badge instanceof HTMLElement) {
+            badge.hidden = true;
+          }
         }
       }
+    }
+
+    function reapplyOpeningCards() {
+      openingCardIds.forEach((id) => {
+        const card = document.querySelector('.card[data-id="' + id + '"]');
+        if (!(card instanceof HTMLElement)) {
+          return;
+        }
+
+        const badge = card.querySelector('.opening-badge');
+        card.classList.add('opening');
+        card.setAttribute('aria-busy', 'true');
+        if (badge instanceof HTMLElement) {
+          badge.hidden = false;
+        }
+      });
+    }
+
+    function applyRenderPayload(payload) {
+      if (!payload || typeof payload !== 'object') {
+        return;
+      }
+
+      currentExpandedGroupIds = Array.isArray(payload.expandedGroupIds)
+        ? payload.expandedGroupIds.filter((value) => typeof value === 'string')
+        : [];
+      currentGroupMode = payload.groupMode;
+      currentShowBuiltin = payload.showBuiltin === true;
+      currentShowSearch = payload.showSearch === true;
+      currentCounts = payload.counts;
+      selectedCardId = typeof payload.selectedExtensionId === 'string'
+        ? payload.selectedExtensionId
+        : '';
+
+      if (toolbar instanceof HTMLElement) {
+        toolbar.hidden = !currentShowSearch;
+      }
+
+      if (!currentShowSearch && searchInput instanceof HTMLInputElement) {
+        searchInputFocused = false;
+        searchInput.blur();
+      }
+
+      if (statsRoot instanceof HTMLElement && typeof payload.statsHtml === 'string') {
+        statsRoot.innerHTML = payload.statsHtml;
+      }
+
+      if (groupsRoot instanceof HTMLElement && typeof payload.sectionsHtml === 'string') {
+        groupsRoot.innerHTML = payload.sectionsHtml;
+      }
+
+      restoreExpandedGroups();
+      applySelectedCard();
+      bindGroupToggleListeners();
+      applySearchFilter();
+      reapplyOpeningCards();
+      persistViewState();
     }
 
     function openCard(id) {
@@ -2429,13 +2612,16 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
     persistViewState();
     sendExpandedGroups();
 
-    document.querySelectorAll('details.group').forEach((details) => {
-      details.addEventListener('toggle', sendExpandedGroups);
-    });
+    bindGroupToggleListeners();
 
     window.addEventListener('message', (event) => {
       const message = event.data;
       if (!message || typeof message.type !== 'string') return;
+
+      if (message.type === 'replaceViewContent') {
+        applyRenderPayload(message.payload);
+        return;
+      }
 
       if (message.type === 'setOpeningExtension') {
         if (typeof message.value !== 'string' || typeof message.opening !== 'boolean') {
@@ -2539,6 +2725,8 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
       event.preventDefault();
       openCard(id);
     });
+
+    vscode.postMessage({ type: 'webviewReady' });
   </script>
 </body>
 </html>`;
