@@ -8,7 +8,7 @@ Browse your installed VS Code extensions from a compact Activity Bar webview. Th
 - Displays per-extension cards with icon, name, publisher, description, version, and badges for Active / Idle / Disabled and Built-in.
 - Includes disabled installed extensions in the list even when they are not present in `vscode.extensions.all`.
 - Shows summary cards: Total, Installed, Built-in with Active / Idle / Disabled breakdowns.
-- Grouping modes: **Pack**, **Publisher**, **Category**, **Category (All)**.
+- Grouping modes: **Pack** (with built-ins pinned first), **Publisher** (with built-ins merged into normal publisher groups when possible, and built-in-only publishers pinned first using the same title format as other publishers), **Category**, **Category (All)**.
 - Per-card actions: **Copy ID**, **Copy Install Cmd** (copies `code --install-extension <id>`), **Marketplace** (opens the extension's Marketplace page), and clicking a card opens the extension details in VS Code.
 - Auto-refreshes when extensions are installed, uninstalled, enabled, or disabled, and refreshes visible activity status while the view is open.
 - Retains webview context when hidden and remembers expanded groups during the session.
