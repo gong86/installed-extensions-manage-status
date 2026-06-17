@@ -1391,12 +1391,12 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
               ${icon}
               <div class="meta">
                 <div class="title-row">
-                  <span class="card-title">${escapeHtml(item.name)}</span>
+                  <span class="card-title">${escapeHtml(item.displayName)}</span>
                   ${kindText ? `<span class="badge kind-badge">${escapeHtml(kindText)}</span>` : ''}
                   <span class="badge status-badge ${statusClass}">${escapeHtml(statusText)}</span>
                   <span class="badge opening-badge" hidden>Requested...</span>
                 </div>
-                <div class="publisher">${escapeHtml(item.publisher)}</div>
+                <div class="identifier">${escapeHtml(item.id)}</div>
                 <div class="desc">${escapeHtml(item.description || 'No description')}</div>
               </div>
               <div class="side">
@@ -1416,7 +1416,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
       const groupIcon = this.getGroupIconMarkup(group);
       const groupCount = group.items.length;
       const groupStateSummary = formatStateSummary(activeCount, inactiveCount, disabledCount);
-      const useIconCountBadge = group.isPack && !!groupIcon;
+      const useIconCountBadge = !!groupIcon;
       const groupIconMarkup = useIconCountBadge ? `
         <span class="group-icon-wrap">
           ${groupIcon}
@@ -1947,16 +1947,18 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
       border-color: color-mix(in srgb, var(--vscode-errorForeground, #c72e0f) 40%, transparent);
     }
 
-    .publisher,
+    .identifier,
     .desc,
     .version {
       color: var(--vscode-descriptionForeground);
       font-size: 12px;
     }
 
-    .publisher {
+    .identifier {
       margin-top: 4px;
       font-weight: 500;
+      opacity: 0.75;
+      font-size: 0.85em;
     }
 
     .desc {
