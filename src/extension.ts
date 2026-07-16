@@ -247,6 +247,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
   private refreshHandle?: NodeJS.Timeout;
   private activityPollHandle?: NodeJS.Timeout;
   private lastRuntimeActivitySignature = '';
+  private nlsBundleCache = new Map<string, Record<string, string> | undefined>();
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -740,12 +741,13 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
       id: resolvedId,
       publisher,
       name,
-      displayName: options.packageJson?.displayName?.trim() || name,
+      displayName:
+        this.resolveNlsPlaceholder(options.packageJson?.displayName?.trim(), options.extensionPath) || name,
       categories: Array.isArray(options.packageJson?.categories) && options.packageJson.categories.length > 0
         ? options.packageJson.categories
         : ['Uncategorized'],
       version: options.packageJson?.version ?? options.fallbackVersion ?? 'unknown',
-      description: options.packageJson?.description ?? '',
+      description: this.resolveNlsPlaceholder(options.packageJson?.description, options.extensionPath) ?? '',
       iconUri,
       extensionPack: Array.isArray(options.packageJson?.extensionPack)
         ? options.packageJson.extensionPack
@@ -777,6 +779,36 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
 
     seenRootIds.add(rootId);
     roots.push(uri);
+  }
+
+  private resolveNlsPlaceholder(value: string | undefined, extensionPath?: string): string | undefined {
+    if (!value || !extensionPath) {
+      return value;
+    }
+
+    const match = /^%(.+)%$/.exec(value.trim());
+    if (!match) {
+      return value;
+    }
+
+    if (!this.nlsBundleCache.has(extensionPath)) {
+      let bundle: Record<string, string> | undefined;
+      try {
+        const raw = fs.readFileSync(path.join(extensionPath, 'package.nls.json'), 'utf8');
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        if (parsed && typeof parsed === 'object') {
+          bundle = Object.fromEntries(
+            Object.entries(parsed).filter(([, v]) => typeof v === 'string')
+          ) as Record<string, string>;
+        }
+      } catch {
+        bundle = undefined;
+      }
+      this.nlsBundleCache.set(extensionPath, bundle);
+    }
+
+    const resolved = this.nlsBundleCache.get(extensionPath)?.[match[1]];
+    return typeof resolved === 'string' && resolved.trim().length > 0 ? resolved.trim() : undefined;
   }
 
   private readExtensionManifest(extensionPath: string): ExtensionManifest | undefined {
