@@ -2,7 +2,7 @@
   "name": "installed-extensions-manage-status",
   "displayName": "Installed Extensions Manage Status",
   "description": "Browse installed VS Code extensions with pack grouping, status badges, and quick manage actions.",
-  "version": "0.1.29",
+  "version": "0.1.30",
   "publisher": "gonghui",
   "license": "MIT",
   "repository": {
@@ -67,7 +67,7 @@
       },
       {
         "command": "installedExtensionsManageStatus.groupByPackChecked",
-        "title": "Group by Pack\u2002\u2002\u2713"
+        "title": "Group by Pack  ✓"
       },
       {
         "command": "installedExtensionsManageStatus.groupByPublisher",
@@ -75,7 +75,7 @@
       },
       {
         "command": "installedExtensionsManageStatus.groupByPublisherChecked",
-        "title": "Group by Publisher\u2002\u2002\u2713"
+        "title": "Group by Publisher  ✓"
       },
       {
         "command": "installedExtensionsManageStatus.groupByCategory",
@@ -83,7 +83,7 @@
       },
       {
         "command": "installedExtensionsManageStatus.groupByCategoryChecked",
-        "title": "Group by Category\u2002\u2002\u2713"
+        "title": "Group by Category  ✓"
       },
       {
         "command": "installedExtensionsManageStatus.groupByCategoryAll",
@@ -91,7 +91,7 @@
       },
       {
         "command": "installedExtensionsManageStatus.groupByCategoryAllChecked",
-        "title": "Group by Category (All)\u2002\u2002\u2713"
+        "title": "Group by Category (All)  ✓"
       },
       {
         "command": "installedExtensionsManageStatus.toggleBuiltin",
@@ -103,7 +103,7 @@
       },
       {
         "command": "installedExtensionsManageStatus.toggleBuiltinChecked",
-        "title": "Show Built-in\u2002\u2002\u2713"
+        "title": "Show Built-in  ✓"
       },
       {
         "command": "installedExtensionsManageStatus.toggleSearch",
@@ -115,7 +115,7 @@
       },
       {
         "command": "installedExtensionsManageStatus.toggleSearchChecked",
-        "title": "Show Search\u2002\u2002\u2713"
+        "title": "Show Search  ✓"
       }
     ],
     "menus": {
