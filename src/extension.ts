@@ -907,6 +907,12 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
     return this.getPackGroups(items);
   }
 
+  private compareByDisplayName(a: ExtensionItem, b: ExtensionItem): number {
+    const aName = a.displayName || a.id;
+    const bName = b.displayName || b.id;
+    return aName.localeCompare(bName, undefined, { sensitivity: 'base' }) || a.id.localeCompare(b.id);
+  }
+
   private getPackGroups(items: ExtensionItem[]): PackGroup[] {
     const byId = new Map(items.map((item) => [item.id.toLowerCase(), item]));
     const assigned = new Set<string>();
@@ -941,7 +947,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
           id: pack.id,
           label: pack.label,
           description: pack.description,
-          items: packItems.sort((a, b) => a.id.localeCompare(b.id)),
+          items: packItems.sort((a, b) => this.compareByDisplayName(a, b)),
           isPack: true,
           iconUri: pack.iconUri,
         });
@@ -960,7 +966,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
         id: 'other-installed',
         label: 'Standalone Extensions',
         description: 'Installed extensions not included in any installed extension pack',
-        items: installed.sort((a, b) => a.id.localeCompare(b.id)),
+        items: installed.sort((a, b) => this.compareByDisplayName(a, b)),
         isPack: false,
       });
     }
@@ -970,7 +976,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
         id: 'builtin',
         label: 'Built-in Extensions',
         description: 'Built-in extensions not included in any installed extension pack',
-        items: builtin.sort((a, b) => a.id.localeCompare(b.id)),
+        items: builtin.sort((a, b) => this.compareByDisplayName(a, b)),
         isPack: false,
       });
     }
@@ -1139,7 +1145,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
         descriptionParts.push('No publisher metadata');
       }
 
-      const sortedItems = groupedItems.sort((a, b) => a.id.localeCompare(b.id));
+      const sortedItems = groupedItems.sort((a, b) => this.compareByDisplayName(a, b));
       if (installedCount === 0) {
         descriptionParts.push(`${builtinCount} built-in`);
         builtinOnlyPublisherGroups.push({
@@ -1227,7 +1233,7 @@ class InstalledExtensionsWebviewProvider implements vscode.WebviewViewProvider, 
           id: `category:${category}`,
           label: this.getCategoryDisplayLabel(category),
           description: descriptionParts.join(' · '),
-          items: categoryItems.sort((a, b) => a.id.localeCompare(b.id)),
+          items: categoryItems.sort((a, b) => this.compareByDisplayName(a, b)),
           isPack: false,
         };
       });
